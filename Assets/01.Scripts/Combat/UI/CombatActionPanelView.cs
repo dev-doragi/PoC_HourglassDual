@@ -5,6 +5,9 @@ using UnityEngine.UI;
 
 public class CombatActionPanelView : MonoBehaviour
 {
+    [Header("Pending Highlight")]
+    [SerializeField] private Color _pendingTintColor = new Color(1f, 0.85f, 0.2f, 1f);
+
     [Header("Q Basic")]
     [SerializeField] private Button _basicButton;
     [SerializeField] private TMP_Text _basicNameText;
@@ -38,8 +41,17 @@ public class CombatActionPanelView : MonoBehaviour
     public Button GuardButton => _guardButton;
     public Button FlipButton => _flipButton;
 
+    private ColorBlock _basicDefaultColors;
+    private ColorBlock _specialDefaultColors;
+    private ColorBlock _guardDefaultColors;
+    private bool _buttonColorsCached;
+    private int _pendingActionSlotIndex = -1;
+    private int _cachedNextEnemySand;
+    private bool _showCommandComplete;
+
     private void Awake()
     {
+        CacheButtonColorBlocks();
         RegisterClearSelection(_basicButton);
         RegisterClearSelection(_specialButton);
         RegisterClearSelection(_guardButton);
@@ -103,6 +115,12 @@ public class CombatActionPanelView : MonoBehaviour
             button.interactable = active && interactable;
         }
 
+        if (!active && _pendingActionSlotIndex == index)
+        {
+            _pendingActionSlotIndex = -1;
+            ApplyPendingHighlight();
+        }
+
         if (nameText != null) nameText.text = active ? actionName : string.Empty;
         if (costText != null) costText.text = active ? $"Cost {Mathf.Max(0, cost)}" : string.Empty;
         if (effectText != null) effectText.text = active ? effect : string.Empty;
@@ -115,10 +133,26 @@ public class CombatActionPanelView : MonoBehaviour
 
     public void SetEndTurnPreview(bool _, int nextSand)
     {
-        if (_flipEffectText != null)
+        _cachedNextEnemySand = Mathf.Max(0, nextSand);
+        RefreshFlipEffectText();
+    }
+
+    public void SetCommandCompleteState(bool complete)
+    {
+        _showCommandComplete = complete;
+        RefreshFlipEffectText();
+    }
+
+    public void SetPendingAction(int actionSlotIndex)
+    {
+        int next = actionSlotIndex >= 0 && actionSlotIndex <= 2 ? actionSlotIndex : -1;
+        if (_pendingActionSlotIndex == next)
         {
-            _flipEffectText.text = $"Pred EnemySand: {Mathf.Max(0, nextSand)}";
+            return;
         }
+
+        _pendingActionSlotIndex = next;
+        ApplyPendingHighlight();
     }
 
     public void SetAllInteractable(bool basic, bool special, bool guard, bool flip)
@@ -172,5 +206,59 @@ public class CombatActionPanelView : MonoBehaviour
             EventSystem.current.SetSelectedGameObject(null);
         }
     }
-}
 
+    private void RefreshFlipEffectText()
+    {
+        if (_flipEffectText == null)
+        {
+            return;
+        }
+
+        _flipEffectText.text = _showCommandComplete
+            ? "명령 완료 - R로 진행"
+            : $"Pred EnemySand: {_cachedNextEnemySand}";
+    }
+
+    private void CacheButtonColorBlocks()
+    {
+        if (_buttonColorsCached)
+        {
+            return;
+        }
+
+        _basicDefaultColors = _basicButton != null ? _basicButton.colors : default;
+        _specialDefaultColors = _specialButton != null ? _specialButton.colors : default;
+        _guardDefaultColors = _guardButton != null ? _guardButton.colors : default;
+        _buttonColorsCached = true;
+    }
+
+    private void ApplyPendingHighlight()
+    {
+        CacheButtonColorBlocks();
+        ApplyButtonPendingStyle(_basicButton, _basicDefaultColors, _pendingActionSlotIndex == 0);
+        ApplyButtonPendingStyle(_specialButton, _specialDefaultColors, _pendingActionSlotIndex == 1);
+        ApplyButtonPendingStyle(_guardButton, _guardDefaultColors, _pendingActionSlotIndex == 2);
+    }
+
+    private void ApplyButtonPendingStyle(Button button, ColorBlock defaults, bool pending)
+    {
+        if (button == null)
+        {
+            return;
+        }
+
+        if (!pending)
+        {
+            button.colors = defaults;
+            return;
+        }
+
+        ColorBlock highlighted = defaults;
+        Color tint = _pendingTintColor;
+        highlighted.normalColor = tint;
+        highlighted.highlightedColor = tint;
+        highlighted.selectedColor = tint;
+        highlighted.pressedColor = Color.Lerp(tint, Color.white, 0.2f);
+        button.colors = highlighted;
+    }
+}

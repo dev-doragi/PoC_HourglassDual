@@ -94,6 +94,12 @@ public struct PrimaryActionInputEvent
     public Vector2 ScreenPosition;
 }
 
+public struct PointerPositionInputEvent
+{
+    public bool HasScreenPosition;
+    public Vector2 ScreenPosition;
+}
+
 public struct SecondaryActionInputEvent
 {
     public bool IsPressed;

@@ -352,6 +352,44 @@ public readonly struct CombatIntentFailedEvent
     }
 }
 
+public readonly struct CombatEnemySandChangedEvent
+{
+    public readonly int ActorId;
+    public readonly CombatActionType ActionType;
+    public readonly string IntentName;
+    public readonly int BeforeEnemySand;
+    public readonly int AfterEnemySand;
+    public readonly int SpentEnemySand;
+    public readonly int RequiredEnemySand;
+    public readonly bool UsedFallback;
+    public readonly string Reason;
+    public readonly CombatLogSnapshot Snapshot;
+
+    public CombatEnemySandChangedEvent(
+        int actorId,
+        CombatActionType actionType,
+        string intentName,
+        int beforeEnemySand,
+        int afterEnemySand,
+        int spentEnemySand,
+        int requiredEnemySand,
+        bool usedFallback,
+        string reason,
+        CombatLogSnapshot snapshot)
+    {
+        ActorId = actorId;
+        ActionType = actionType;
+        IntentName = intentName;
+        BeforeEnemySand = beforeEnemySand;
+        AfterEnemySand = afterEnemySand;
+        SpentEnemySand = spentEnemySand;
+        RequiredEnemySand = requiredEnemySand;
+        UsedFallback = usedFallback;
+        Reason = reason;
+        Snapshot = snapshot;
+    }
+}
+
 public readonly struct CombatActorSelectedEvent
 {
     public readonly CombatActorType TeamType;

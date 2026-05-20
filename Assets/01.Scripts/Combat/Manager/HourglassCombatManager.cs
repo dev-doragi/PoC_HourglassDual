@@ -165,6 +165,7 @@ public class HourglassCombatManager : Singleton<HourglassCombatManager>
 
         CombatActionResult result = ApplyCommand(command, source);
         source.HasActedThisRound = true;
+        TryAutoSelectNextCommandableAlly(source.SlotIndex);
 
         string message = result.Succeeded ? "Resolved" : (result.FailureReason ?? "Failed");
         EventBus.Instance.Publish(new CombatAllyCommandResolvedEvent(command, result.Succeeded, message, CreateSnapshot()));
@@ -286,6 +287,24 @@ public class HourglassCombatManager : Singleton<HourglassCombatManager>
         }
 
         return true;
+    }
+
+    public bool HasAnyCommandableAlly()
+    {
+        if (RuntimeState == null || !CanAcceptPlayerInput())
+        {
+            return false;
+        }
+
+        for (int i = 0; i < RuntimeState.Allies.Count; i++)
+        {
+            if (CanActorTakeAnyAction(RuntimeState.Allies[i]))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private bool InitializeRuntime()
@@ -746,6 +765,9 @@ public class HourglassCombatManager : Singleton<HourglassCombatManager>
             yield break;
         }
 
+        PublishTurnSwapFlipOnly();
+        yield return new WaitForSeconds(Mathf.Max(_phaseStepDelay, _flipDuration));
+
         BeginRound(RuntimeState.TurnIndex + 1);
         _roundResolveRoutine = null;
     }
@@ -814,18 +836,10 @@ public class HourglassCombatManager : Singleton<HourglassCombatManager>
                     continue;
                 }
 
-                int beforeGuard = ally.GuardValue;
-                if (command.GuardGain > 0)
-                {
-                    CombatActionResolver.ApplyGuardToActor(ally, command.GuardGain);
-                }
-
                 if (command.HealAmount > 0)
                 {
                     ally.Heal(command.HealAmount);
                 }
-
-                PublishGuardChangedIfNeeded(ally, beforeGuard, ally.GuardValue);
             }
 
             return new CombatActionResult(command.ActionType, true, 0, 0, 0, false, false);
@@ -839,18 +853,11 @@ public class HourglassCombatManager : Singleton<HourglassCombatManager>
                 return new CombatActionResult(command.ActionType, false, 0, 0, 0, false, false, "NoAliveAlly");
             }
 
-            int beforeGuard = allyTarget.GuardValue;
-            if (command.GuardGain > 0)
-            {
-                CombatActionResolver.ApplyGuardToActor(allyTarget, command.GuardGain);
-            }
-
             if (command.HealAmount > 0)
             {
                 allyTarget.Heal(command.HealAmount);
             }
 
-            PublishGuardChangedIfNeeded(allyTarget, beforeGuard, allyTarget.GuardValue);
             return new CombatActionResult(command.ActionType, true, 0, 0, 0, false, false);
         }
 
@@ -896,11 +903,29 @@ public class HourglassCombatManager : Singleton<HourglassCombatManager>
             minimumFallResult.LowerAfter,
             CreateSnapshot()));
 
+        int previousEnemySand = Mathf.Max(0, RuntimeState.EnemySand);
         int transferredToEnemy = Mathf.Max(0, RuntimeState.LowerSand);
         RuntimeState.TurnState = CombatTurnState.Flipping;
         _turnProcessor.FlipHourglass(RuntimeState, transferredToEnemy);
+        PublishEnemySandChanged(
+            -1,
+            CombatActionType.None,
+            "Enemy Turn Start",
+            previousEnemySand,
+            RuntimeState.EnemySand,
+            Mathf.Max(0, RuntimeState.EnemySand - previousEnemySand),
+            0,
+            false,
+            "TurnStart");
         EventBus.Instance.Publish(new CombatHourglassFlippedEvent(RuntimeState.EnemySand, CreateSnapshot()));
         Debug.Log($"[Combat] HourglassFlipped | transferredToEnemy:{transferredToEnemy} EnemySand:{RuntimeState.EnemySand}");
+    }
+
+    private void PublishTurnSwapFlipOnly()
+    {
+        RuntimeState.TurnState = CombatTurnState.Flipping;
+        EventBus.Instance.Publish(new CombatHourglassFlippedEvent(RuntimeState.EnemySand, CreateSnapshot()));
+        Debug.Log($"[Combat] HourglassFlipped | turn swap only | EnemySand:{RuntimeState.EnemySand}");
     }
 
     private IEnumerator ResolveEnemyTurnRoutine()
@@ -966,13 +991,28 @@ public class HourglassCombatManager : Singleton<HourglassCombatManager>
     {
         CombatIntentRuntime resolvedIntent = intent;
         bool usedFallback = false;
+        int enemySandBefore = Mathf.Max(0, RuntimeState.EnemySand);
 
         if (RuntimeState.EnemySand < intent.EffectiveCost)
         {
             if (!TryBuildFallbackIntent(intent, out CombatIntentRuntime fallback) || RuntimeState.EnemySand < fallback.EffectiveCost)
             {
                 enemy.CurrentActionValue += enemy.BaseActionValue;
-                EventBus.Instance.Publish(new CombatIntentFailedEvent(ToIntentSnapshot(intent), "NotEnoughSand", CreateSnapshot()));
+                int required = fallback.EffectiveCost > 0 ? fallback.EffectiveCost : intent.EffectiveCost;
+                PublishEnemySandChanged(
+                    enemy.ActorId,
+                    intent.ActionType,
+                    string.IsNullOrWhiteSpace(intent.DisplayName) ? intent.ActionType.ToString() : intent.DisplayName,
+                    enemySandBefore,
+                    enemySandBefore,
+                    0,
+                    required,
+                    false,
+                    "NotEnoughSand");
+                EventBus.Instance.Publish(new CombatIntentFailedEvent(
+                    ToIntentSnapshot(intent),
+                    $"NotEnoughSand(required:{required},current:{enemySandBefore})",
+                    CreateSnapshot()));
                 PublishEnemyEntryResolved(orderEntry, false, "EnemyIntentFailed");
                 Debug.Log($"[Combat] EnemyIntentFailed | {enemy.DisplayName} {intent.ActionType} NotEnoughSand");
                 return;
@@ -983,6 +1023,16 @@ public class HourglassCombatManager : Singleton<HourglassCombatManager>
         }
 
         RuntimeState.EnemySand = Mathf.Max(0, RuntimeState.EnemySand - resolvedIntent.EffectiveCost);
+        PublishEnemySandChanged(
+            enemy.ActorId,
+            resolvedIntent.ActionType,
+            string.IsNullOrWhiteSpace(resolvedIntent.DisplayName) ? resolvedIntent.ActionType.ToString() : resolvedIntent.DisplayName,
+            enemySandBefore,
+            RuntimeState.EnemySand,
+            Mathf.Max(0, resolvedIntent.EffectiveCost),
+            Mathf.Max(0, resolvedIntent.EffectiveCost),
+            usedFallback,
+            usedFallback ? "FallbackSpent" : "Spent");
         CombatActionResult result = ApplyIntent(resolvedIntent, enemy);
         enemy.CurrentActionValue += enemy.BaseActionValue;
 
@@ -1315,6 +1365,69 @@ public class HourglassCombatManager : Singleton<HourglassCombatManager>
         return Mathf.Clamp(from, 0, Mathf.Max(0, count - 1));
     }
 
+    private bool TryAutoSelectNextCommandableAlly(int fromSlot)
+    {
+        if (RuntimeState == null || RuntimeState.Allies.Count == 0)
+        {
+            return false;
+        }
+
+        int count = RuntimeState.Allies.Count;
+        int safeFrom = Mathf.Clamp(fromSlot, 0, count - 1);
+        for (int i = 1; i <= count; i++)
+        {
+            int slot = (safeFrom + i) % count;
+            CombatActorRuntime actor = RuntimeState.Allies[slot];
+            if (!CanActorTakeAnyAction(actor))
+            {
+                continue;
+            }
+
+            RuntimeState.SelectedAllySlot = slot;
+            PublishActorSelected(CombatActorType.Ally, slot);
+            return true;
+        }
+
+        return false;
+    }
+
+    private bool CanActorTakeAnyAction(CombatActorRuntime actor)
+    {
+        if (RuntimeState == null || actor == null || actor.IsDead || actor.HasActedThisRound)
+        {
+            return false;
+        }
+
+        int remainingUpper = Mathf.Max(0, RuntimeState.UpperSand);
+        if (actor.ActionList == null || actor.ActionList.Count == 0)
+        {
+            return false;
+        }
+
+        for (int i = 0; i < actor.ActionList.Count; i++)
+        {
+            CombatActionDataSO action = actor.ActionList[i];
+            if (action == null)
+            {
+                continue;
+            }
+
+            if (remainingUpper < Mathf.Max(0, action.baseCost))
+            {
+                continue;
+            }
+
+            if (RequiresEnemyTarget(action) && RuntimeState.GetFirstAliveEnemy() == null)
+            {
+                continue;
+            }
+
+            return true;
+        }
+
+        return false;
+    }
+
     private void EnsureSelectionsAreAlive()
     {
         if (RuntimeState.Allies.Count > 0)
@@ -1362,6 +1475,30 @@ public class HourglassCombatManager : Singleton<HourglassCombatManager>
         }
 
         EventBus.Instance.Publish(new CombatActorSelectedEvent(teamType, slotIndex, actorId, CreateSnapshot()));
+    }
+
+    private void PublishEnemySandChanged(
+        int actorId,
+        CombatActionType actionType,
+        string intentName,
+        int beforeEnemySand,
+        int afterEnemySand,
+        int spentEnemySand,
+        int requiredEnemySand,
+        bool usedFallback,
+        string reason)
+    {
+        EventBus.Instance.Publish(new CombatEnemySandChangedEvent(
+            actorId,
+            actionType,
+            intentName ?? string.Empty,
+            Mathf.Max(0, beforeEnemySand),
+            Mathf.Max(0, afterEnemySand),
+            Mathf.Max(0, spentEnemySand),
+            Mathf.Max(0, requiredEnemySand),
+            usedFallback,
+            reason ?? string.Empty,
+            CreateSnapshot()));
     }
 
     private CombatLogSnapshot CreateSnapshot()

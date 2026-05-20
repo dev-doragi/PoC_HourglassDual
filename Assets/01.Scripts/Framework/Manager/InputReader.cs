@@ -109,6 +109,25 @@ public class InputReader : Singleton<InputReader>
         _combatMap?.Disable();
     }
 
+    private void Update()
+    {
+        if (Pointer.current != null)
+        {
+            EventBus.Instance.Publish(new PointerPositionInputEvent
+            {
+                HasScreenPosition = true,
+                ScreenPosition = Pointer.current.position.ReadValue()
+            });
+            return;
+        }
+
+        EventBus.Instance.Publish(new PointerPositionInputEvent
+        {
+            HasScreenPosition = false,
+            ScreenPosition = Vector2.zero
+        });
+    }
+
     private InputAction RequireAction(InputActionMap map, string actionName)
     {
         InputAction action = map.FindAction(actionName, false);

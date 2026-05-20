@@ -47,6 +47,7 @@ public class CombatActorPanelView : MonoBehaviour
     public void ApplyActorState(CombatActorRuntime actor, bool isCurrentTurn, bool isAlly)
     {
         CacheVisualDefaults();
+        SetGuardVisible(!isAlly);
         if (actor == null)
         {
             if (_nameText != null) _nameText.text = "-";
@@ -93,7 +94,7 @@ public class CombatActorPanelView : MonoBehaviour
 
         if (_guardText != null)
         {
-            _guardText.text = $"{actor.GuardValue}/{Mathf.Max(0, actor.MaxGuard)}";
+            _guardText.text = isAlly ? string.Empty : $"{actor.GuardValue}/{Mathf.Max(0, actor.MaxGuard)}";
         }
 
         if (_guardBar != null)
@@ -268,5 +269,18 @@ public class CombatActorPanelView : MonoBehaviour
         }
 
         _visualCached = true;
+    }
+
+    private void SetGuardVisible(bool visible)
+    {
+        if (_guardText != null)
+        {
+            _guardText.gameObject.SetActive(visible);
+        }
+
+        if (_guardBar != null)
+        {
+            _guardBar.gameObject.SetActive(visible);
+        }
     }
 }

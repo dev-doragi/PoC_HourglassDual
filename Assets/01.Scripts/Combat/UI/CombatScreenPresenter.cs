@@ -6,6 +6,13 @@ using UnityEngine.UI;
 [DefaultExecutionOrder(-40)]
 public class CombatScreenPresenter : MonoBehaviour
 {
+    private const string RoundIndexColor = "#7F8FA6";
+    private const string PlayerActionColor = "#5EC8FF";
+    private const string EnemyActionColor = "#FF9B7A";
+    private const string DamageColor = "#FFB4A2";
+    private const string SpecialEventColor = "#FFD966";
+    private const string FailureColor = "#FF6B6B";
+
     [Header("Main Views")]
     [SerializeField] private CombatActorPanelView playerStatusView;
     [SerializeField] private CombatActorPanelView enemyStatusView;
@@ -29,6 +36,8 @@ public class CombatScreenPresenter : MonoBehaviour
     private CombatActionDataSO _specialAction;
     private CombatActionDataSO _pendingEnemyTargetAction;
     private int _pendingSourceActorId = -1;
+    private int _pendingActionSlotIndex = -1;
+    private int _pendingLockedEnemySlot = -1;
 
     private void OnEnable()
     {
@@ -46,6 +55,7 @@ public class CombatScreenPresenter : MonoBehaviour
         EventBus.Instance.Subscribe<CombatTimelineEntryResolvedEvent>(OnCombatTimelineEntryResolved);
         EventBus.Instance.Subscribe<CombatIntentResolvedEvent>(OnCombatIntentResolved);
         EventBus.Instance.Subscribe<CombatIntentFailedEvent>(OnCombatIntentFailed);
+        EventBus.Instance.Subscribe<CombatEnemySandChangedEvent>(OnCombatEnemySandChanged);
         EventBus.Instance.Subscribe<CombatActorSelectedEvent>(OnCombatActorSelected);
         EventBus.Instance.Subscribe<CombatActorDamagedEvent>(OnCombatActorDamaged);
         EventBus.Instance.Subscribe<CombatActorGuardChangedEvent>(OnCombatActorGuardChanged);
@@ -92,6 +102,7 @@ public class CombatScreenPresenter : MonoBehaviour
         EventBus.Instance.Unsubscribe<CombatTimelineEntryResolvedEvent>(OnCombatTimelineEntryResolved);
         EventBus.Instance.Unsubscribe<CombatIntentResolvedEvent>(OnCombatIntentResolved);
         EventBus.Instance.Unsubscribe<CombatIntentFailedEvent>(OnCombatIntentFailed);
+        EventBus.Instance.Unsubscribe<CombatEnemySandChangedEvent>(OnCombatEnemySandChanged);
         EventBus.Instance.Unsubscribe<CombatActorSelectedEvent>(OnCombatActorSelected);
         EventBus.Instance.Unsubscribe<CombatActorDamagedEvent>(OnCombatActorDamaged);
         EventBus.Instance.Unsubscribe<CombatActorGuardChangedEvent>(OnCombatActorGuardChanged);
@@ -149,6 +160,7 @@ public class CombatScreenPresenter : MonoBehaviour
             return;
         }
 
+        ValidatePendingTargeting(state);
         CombatActorRuntime selectedAlly = state.GetSelectedAlly();
         CombatActorRuntime selectedEnemy = state.GetSelectedEnemy();
         bool planning = state.TurnState == CombatTurnState.PlayerCommand && !state.IsCombatEnded;
@@ -161,6 +173,7 @@ public class CombatScreenPresenter : MonoBehaviour
         playerStatusView?.SetPressureState(false, 0, pressureMax);
         enemyStatusView?.SetPressureState(true, state.Pressure, pressureMax);
         hourglassView?.Refresh(state);
+        boardView?.SetTargetingMode(_pendingEnemyTargetAction != null, _pendingLockedEnemySlot);
         boardView?.Refresh(state);
         timelineView?.SetTimeline(_lastTimelinePreview);
 
@@ -192,6 +205,8 @@ public class CombatScreenPresenter : MonoBehaviour
         int predictedEnemySand = Mathf.Max(state.MinimumFall, state.LowerSand);
         actionPanelView.SetEndTurnPreview(true, predictedEnemySand);
         actionPanelView.SetFlipInteractable(planning);
+        actionPanelView.SetPendingAction(_pendingActionSlotIndex);
+        actionPanelView.SetCommandCompleteState(planning && !_combatManager.HasAnyCommandableAlly());
     }
 
     private void UpdateActionPanelInteractivity(CombatRuntimeState state)
@@ -208,6 +223,8 @@ public class CombatScreenPresenter : MonoBehaviour
         int predictedEnemySand = Mathf.Max(state.MinimumFall, state.LowerSand);
         actionPanelView.SetEndTurnPreview(true, predictedEnemySand);
         actionPanelView.SetFlipInteractable(planning);
+        actionPanelView.SetPendingAction(_pendingActionSlotIndex);
+        actionPanelView.SetCommandCompleteState(planning && !_combatManager.HasAnyCommandableAlly());
     }
 
     private void ApplyActionSlot(int slotIndex, string emptyName, CombatActionDataSO action, bool planning)
@@ -451,38 +468,49 @@ public class CombatScreenPresenter : MonoBehaviour
     private void OnCombatRoundStarted(CombatRoundStartedEvent evt)
     {
         ClearPendingTargeting();
-        combatLogView?.AddLog($"[R{evt.Snapshot.round_index}] Round Start");
+        combatLogView?.AddLog($"{FormatRoundPrefix(evt.Snapshot.round_index)}{FormatSpecial($"라운드 {Mathf.Max(1, evt.Snapshot.round_index)} 시작")}");
         RefreshViews();
     }
 
     private void OnCombatIntentShown(CombatIntentShownEvent evt)
     {
-        combatLogView?.AddLog($"[R{evt.Snapshot.round_index}] Intent {evt.Intent.action_type} c{evt.Intent.effective_cost}/{evt.Intent.base_cost} s{evt.Intent.speed}");
         RefreshViews();
     }
 
     private void OnCombatCommandQueued(CombatCommandQueuedEvent evt)
     {
-        combatLogView?.AddLog($"[R{evt.Snapshot.round_index}] Queue {evt.Command.DisplayName} c{evt.Command.Cost} s{evt.Command.Speed} -> U:{evt.PredictedUpperSand} L:{evt.PredictedLowerSand}");
         hourglassView?.AnimateQueuedSpend(evt.PredictedUpperSand, evt.PredictedLowerSand);
         RefreshViews();
     }
 
     private void OnCombatCommandConfirmed(CombatCommandConfirmedEvent evt)
     {
-        combatLogView?.AddLog($"[R{evt.Snapshot.round_index}] Confirm spend {evt.PlayerSpend}");
         RefreshViews();
     }
 
     private void OnCombatAllyCommandResolved(CombatAllyCommandResolvedEvent evt)
     {
-        combatLogView?.AddLog($"[R{evt.Snapshot.round_index}] AllyCommandResolved {evt.Command.ActionType} {(evt.Succeeded ? "OK" : "FAIL")} ({evt.Message})");
+        string actorName = ResolveActorName(evt.Command.SourceActorId, evt.Snapshot, "아군");
+        string actionName = ToKoreanActionName(evt.Command.ActionType);
+        if (evt.Succeeded)
+        {
+            combatLogView?.AddLog($"{FormatRoundPrefix(evt.Snapshot.round_index)}<color={PlayerActionColor}>{actorName} {actionName}</color>");
+        }
+        else
+        {
+            combatLogView?.AddLog($"{FormatRoundPrefix(evt.Snapshot.round_index)}<color={FailureColor}>{actorName} {actionName} 실패 ({evt.Message})</color>");
+        }
+
         RefreshViews();
     }
 
     private void OnCombatMinimumFallApplied(CombatMinimumFallAppliedEvent evt)
     {
-        combatLogView?.AddLog($"[R{evt.Snapshot.round_index}] MinFall forced {evt.ForcedAmount}");
+        if (evt.ForcedAmount > 0)
+        {
+            combatLogView?.AddLog($"{FormatRoundPrefix(evt.Snapshot.round_index)}{FormatSpecial($">>> 최소 낙하 +{evt.ForcedAmount}")}");
+        }
+
         hourglassView?.AnimateMinimumFall(evt.UpperAfter, evt.LowerAfter, evt.ForcedAmount);
         RefreshViews();
     }
@@ -490,8 +518,8 @@ public class CombatScreenPresenter : MonoBehaviour
     private void OnCombatHourglassFlipped(CombatHourglassFlippedEvent evt)
     {
         CacheCombatManager();
-        hourglassView?.QueueFlipPreview(evt.Snapshot, _combatManager != null ? _combatManager.RuntimeState : null);
-        combatLogView?.AddLog($"[R{evt.Snapshot.round_index}] Flip EnemySand={evt.EnemySand}");
+        hourglassView?.PlayFlipSequence(_combatManager != null ? _combatManager.RuntimeState : null);
+        combatLogView?.AddLog($"{FormatRoundPrefix(evt.Snapshot.round_index)}{FormatSpecial("플립")}");
         RefreshViews();
     }
 
@@ -499,7 +527,6 @@ public class CombatScreenPresenter : MonoBehaviour
     {
         _lastTimelinePreview = evt.EnemyOrder ?? System.Array.Empty<CombatTimelineEntrySnapshot>();
         timelineView?.SetTimeline(_lastTimelinePreview);
-        combatLogView?.AddLog($"[R{evt.Snapshot.round_index}] EnemyOrderChanged ({_lastTimelinePreview.Length})");
         RefreshViews();
     }
 
@@ -543,7 +570,6 @@ public class CombatScreenPresenter : MonoBehaviour
             timelineView?.SetTimeline(_lastTimelinePreview);
         }
 
-        combatLogView?.AddLog($"[R{evt.Snapshot.round_index}] {evt.Message} {evt.Entry.label}");
         RefreshViews();
     }
 
@@ -558,31 +584,63 @@ public class CombatScreenPresenter : MonoBehaviour
     {
         _lastTimelinePreview = evt.Timeline ?? System.Array.Empty<CombatTimelineEntrySnapshot>();
         timelineView?.SetTimeline(_lastTimelinePreview);
-        combatLogView?.AddLog($"[R{evt.Snapshot.round_index}] EnemyTurnStarted ({_lastTimelinePreview.Length})");
+        combatLogView?.AddLog($"{FormatRoundPrefix(evt.Snapshot.round_index)}<color={EnemyActionColor}>적 행동 시작</color>");
         RefreshViews();
     }
 
     private void OnCombatTimelineEntryResolved(CombatTimelineEntryResolvedEvent evt)
     {
-        combatLogView?.AddLog($"[R{evt.Snapshot.round_index}] EnemyOrderEntryResolved {evt.Entry.label} {(evt.Succeeded ? "OK" : "FAIL")} ({evt.Message})");
         RefreshViews();
     }
 
     private void OnCombatIntentResolved(CombatIntentResolvedEvent evt)
     {
-        combatLogView?.AddLog($"[R{evt.Snapshot.round_index}] Intent Resolved {evt.Intent.action_type} spend {evt.SpentEnemySand}");
         RefreshViews();
     }
 
     private void OnCombatIntentFailed(CombatIntentFailedEvent evt)
     {
-        combatLogView?.AddLog($"[R{evt.Snapshot.round_index}] Intent Failed {evt.Intent.action_type} ({evt.Reason})");
+        string actorName = ResolveActorName(evt.Intent.source_actor_id, evt.Snapshot, "적");
+        string actionName = ToKoreanActionName(evt.Intent.action_type);
+        if (string.IsNullOrEmpty(evt.Reason)
+            || !evt.Reason.StartsWith("NotEnoughSand", System.StringComparison.Ordinal))
+        {
+            combatLogView?.AddLog($"{FormatRoundPrefix(evt.Snapshot.round_index)}<color={FailureColor}>{actorName} {actionName} 실패 ({evt.Reason})</color>");
+        }
+
         RefreshViews();
+    }
+
+    private void OnCombatEnemySandChanged(CombatEnemySandChangedEvent evt)
+    {
+        bool immediate = evt.Reason == "TurnStart";
+        hourglassView?.AnimateEnemySand(evt.BeforeEnemySand, evt.AfterEnemySand, immediate);
+
+        if (evt.Reason == "TurnStart")
+        {
+            RefreshViews(false);
+            return;
+        }
+
+        string actorName = ResolveActorName(evt.ActorId, evt.Snapshot, "적");
+        string intentName = string.IsNullOrWhiteSpace(evt.IntentName) ? ToKoreanActionName(evt.ActionType) : evt.IntentName;
+        if (evt.SpentEnemySand > 0)
+        {
+            string prefix = evt.UsedFallback ? "fallback" : "used";
+            combatLogView?.AddLog(
+                $"{FormatRoundPrefix(evt.Snapshot.round_index)}<color={EnemyActionColor}>{actorName} {prefix} {intentName}. EnemySand {evt.BeforeEnemySand} -> {evt.AfterEnemySand}</color>");
+        }
+        else if (evt.Reason == "NotEnoughSand")
+        {
+            combatLogView?.AddLog(
+                $"{FormatRoundPrefix(evt.Snapshot.round_index)}<color={FailureColor}>{actorName} failed {intentName}. Required {evt.RequiredEnemySand}, current EnemySand {evt.BeforeEnemySand}</color>");
+        }
+
+        RefreshViews(false);
     }
 
     private void OnCombatActorSelected(CombatActorSelectedEvent evt)
     {
-        combatLogView?.AddLog($"[R{evt.Snapshot.round_index}] Selected {evt.TeamType} slot {evt.SlotIndex}");
         if (evt.TeamType == CombatActorType.Ally)
         {
             ClearPendingTargeting();
@@ -610,13 +668,13 @@ public class CombatScreenPresenter : MonoBehaviour
         panel?.PlayHitReaction();
         combatFeedbackView?.SpawnDamagePopup(panel != null ? panel.PopupAnchor : null, evt.Damage, isAlly ? new Color(1f, 0.35f, 0.35f, 1f) : new Color(1f, 0.65f, 0.3f, 1f));
         combatFeedbackView?.PlayScreenPulse();
-        combatLogView?.AddLog($"[R{evt.Snapshot.round_index}] Damage {evt.ActorId} -{evt.Damage}");
+        string victim = target != null ? target.DisplayName : (isAlly ? "아군" : "적");
+        combatLogView?.AddLog($"{FormatRoundPrefix(evt.Snapshot.round_index)}<color={DamageColor}>{victim} -{Mathf.Max(0, evt.Damage)} HP</color>");
         RefreshViews();
     }
 
     private void OnCombatActorGuardChanged(CombatActorGuardChangedEvent evt)
     {
-        combatLogView?.AddLog($"[R{evt.Snapshot.round_index}] Guard {evt.ActorId} {evt.BeforeGuard}->{evt.AfterGuard}");
         RefreshViews();
     }
 
@@ -624,32 +682,33 @@ public class CombatScreenPresenter : MonoBehaviour
     {
         combatFeedbackView?.ShowBreakText(enemyStatusView != null ? enemyStatusView.PopupAnchor : null);
         combatFeedbackView?.PlayScreenPulse();
-        combatLogView?.AddLog($"[R{evt.Snapshot.round_index}] Broken {evt.ActorId}");
+        string actorName = ResolveActorName(evt.ActorId, evt.Snapshot, "적");
+        combatLogView?.AddLog($"{FormatRoundPrefix(evt.Snapshot.round_index)}{FormatSpecial($">>> 브레이크! ({actorName})")}");
         RefreshViews();
     }
 
     private void OnCombatActorKilled(CombatActorKilledEvent evt)
     {
-        combatLogView?.AddLog($"[R{evt.Snapshot.round_index}] Killed {evt.ActorId}");
+        string actorName = ResolveActorName(evt.ActorId, evt.Snapshot, "대상");
+        combatLogView?.AddLog($"{FormatRoundPrefix(evt.Snapshot.round_index)}{FormatSpecial($"{actorName} 격파")}");
         RefreshViews();
     }
 
     private void OnCombatKillBonusGranted(CombatKillBonusGrantedEvent evt)
     {
-        combatLogView?.AddLog($"[R{evt.Snapshot.round_index}] KillBonus token {evt.KillBonusToken}");
+        combatLogView?.AddLog($"{FormatRoundPrefix(evt.Snapshot.round_index)}{FormatSpecial($">>> 킬 보너스 토큰 +1 (현재 {Mathf.Max(0, evt.KillBonusToken)})")}");
         RefreshViews();
     }
 
     private void OnCombatPressureChanged(CombatPressureChangedEvent evt)
     {
-        combatLogView?.AddLog($"[R{evt.Snapshot.round_index}] Pressure {evt.PreviousPressure}->{evt.NewPressure}");
         RefreshViews();
     }
 
     private void OnCombatEnded(CombatEndedEvent evt)
     {
         ClearPendingTargeting();
-        combatLogView?.AddLog($"[R{evt.Snapshot.round_index}] {(evt.PlayerWon ? "Victory" : "Defeat")}");
+        combatLogView?.AddLog($"{FormatRoundPrefix(evt.Snapshot.round_index)}{FormatSpecial(evt.PlayerWon ? "승리" : "패배")}");
         hourglassView?.SetResultText(evt.PlayerWon);
         SetAllButtonsInteractable(false);
         RefreshViews();
@@ -677,17 +736,17 @@ public class CombatScreenPresenter : MonoBehaviour
 
     private void RequestBasicAction()
     {
-        RequestPlayerAction(_basicAction);
+        RequestPlayerAction(_basicAction, 0);
     }
 
     private void RequestSpecialAction()
     {
-        RequestPlayerAction(_specialAction);
+        RequestPlayerAction(_specialAction, 1);
     }
 
     private void RequestGuardAction()
     {
-        RequestPlayerAction(_guardAction);
+        RequestPlayerAction(_guardAction, 2);
     }
 
     private void RequestFlip()
@@ -698,7 +757,7 @@ public class CombatScreenPresenter : MonoBehaviour
         _combatManager?.RequestEndTurn();
     }
 
-    private void RequestPlayerAction(CombatActionDataSO action)
+    private void RequestPlayerAction(CombatActionDataSO action, int actionSlotIndex)
     {
         if (hourglassView != null && hourglassView.IsTransitioning)
         {
@@ -725,13 +784,22 @@ public class CombatScreenPresenter : MonoBehaviour
 
         if (RequiresExplicitEnemyTarget(action))
         {
-            _pendingEnemyTargetAction = action;
-            _pendingSourceActorId = source.ActorId;
-            combatLogView?.AddLog($"[R{state.TurnIndex}] Targeting {action.displayName}");
+            bool isSamePending = _pendingEnemyTargetAction == action
+                && _pendingSourceActorId == source.ActorId
+                && _pendingActionSlotIndex == actionSlotIndex;
+            if (isSamePending)
+            {
+                ClearPendingTargeting();
+                RefreshViews(false);
+                return;
+            }
+
+            SetPendingTargeting(action, source.ActorId, actionSlotIndex);
             RefreshViews(false);
             return;
         }
 
+        ClearPendingTargeting();
         ExecuteImmediatePlayerAction(action, -1);
     }
 
@@ -757,6 +825,13 @@ public class CombatScreenPresenter : MonoBehaviour
             return true;
         }
 
+        int targetSlot = FindEnemySlotByActorId(state, enemyActorId);
+        if (targetSlot >= 0)
+        {
+            _pendingLockedEnemySlot = targetSlot;
+            boardView?.SetTargetLockedSlot(targetSlot);
+        }
+
         ExecuteImmediatePlayerAction(_pendingEnemyTargetAction, enemyActorId);
         return true;
     }
@@ -771,7 +846,8 @@ public class CombatScreenPresenter : MonoBehaviour
         bool ok = _combatManager.TryExecuteActionForSelectedAlly(action, targetActorId, out string reason);
         if (!ok && !string.IsNullOrWhiteSpace(reason))
         {
-            combatLogView?.AddLog($"ActionBlocked: {reason}");
+            int round = _combatManager != null && _combatManager.RuntimeState != null ? _combatManager.RuntimeState.TurnIndex : 0;
+            combatLogView?.AddLog($"{FormatRoundPrefix(round)}<color={FailureColor}>행동 불가: {reason}</color>");
         }
 
         ClearPendingTargeting();
@@ -780,12 +856,138 @@ public class CombatScreenPresenter : MonoBehaviour
 
     private static bool RequiresExplicitEnemyTarget(CombatActionDataSO action)
     {
-        return action != null && action.targetType == CombatTargetType.SingleEnemy;
+        return action != null
+            && action.targetType == CombatTargetType.SingleEnemy
+            && action.actionType != CombatActionType.Guard;
     }
 
     private void ClearPendingTargeting()
     {
         _pendingEnemyTargetAction = null;
         _pendingSourceActorId = -1;
+        _pendingActionSlotIndex = -1;
+        _pendingLockedEnemySlot = -1;
+        actionPanelView?.SetPendingAction(-1);
+        boardView?.ClearTargetingMode();
+    }
+
+    private void SetPendingTargeting(CombatActionDataSO action, int sourceActorId, int actionSlotIndex)
+    {
+        _pendingEnemyTargetAction = action;
+        _pendingSourceActorId = sourceActorId;
+        _pendingActionSlotIndex = actionSlotIndex;
+        _pendingLockedEnemySlot = -1;
+        actionPanelView?.SetPendingAction(_pendingActionSlotIndex);
+        boardView?.SetTargetingMode(true, -1);
+    }
+
+    private void ValidatePendingTargeting(CombatRuntimeState state)
+    {
+        if (_pendingEnemyTargetAction == null)
+        {
+            return;
+        }
+
+        if (state == null || state.IsCombatEnded || state.TurnState != CombatTurnState.PlayerCommand)
+        {
+            ClearPendingTargeting();
+            return;
+        }
+
+        CombatActorRuntime selectedAlly = state.GetSelectedAlly();
+        if (selectedAlly == null || selectedAlly.IsDead || selectedAlly.ActorId != _pendingSourceActorId)
+        {
+            ClearPendingTargeting();
+        }
+    }
+
+    private static int FindEnemySlotByActorId(CombatRuntimeState state, int actorId)
+    {
+        if (state == null || actorId <= 0)
+        {
+            return -1;
+        }
+
+        for (int i = 0; i < state.Enemies.Count; i++)
+        {
+            CombatActorRuntime enemy = state.Enemies[i];
+            if (enemy != null && enemy.ActorId == actorId)
+            {
+                return i;
+            }
+        }
+
+        return -1;
+    }
+
+    private static string FormatRoundPrefix(int roundIndex)
+    {
+        return $"<color={RoundIndexColor}>[R{Mathf.Max(0, roundIndex):00}]</color> ";
+    }
+
+    private static string FormatSpecial(string message)
+    {
+        return $"<b><color={SpecialEventColor}>{message}</color></b>";
+    }
+
+    private static string ResolveActorName(int actorId, in CombatLogSnapshot snapshot, string fallback)
+    {
+        if (actorId <= 0)
+        {
+            return fallback;
+        }
+
+        for (int i = 0; i < snapshot.allies.Length; i++)
+        {
+            CombatActorSnapshot actor = snapshot.allies[i];
+            if (actor.actor_id == actorId)
+            {
+                return string.IsNullOrWhiteSpace(actor.actor_name) ? fallback : actor.actor_name;
+            }
+        }
+
+        for (int i = 0; i < snapshot.enemies.Length; i++)
+        {
+            CombatActorSnapshot actor = snapshot.enemies[i];
+            if (actor.actor_id == actorId)
+            {
+                return string.IsNullOrWhiteSpace(actor.actor_name) ? fallback : actor.actor_name;
+            }
+        }
+
+        return fallback;
+    }
+
+    private static string ToKoreanActionName(CombatActionType actionType)
+    {
+        switch (actionType)
+        {
+            case CombatActionType.BasicAttack:
+                return "기본 공격";
+            case CombatActionType.HeavyStrike:
+                return "강타";
+            case CombatActionType.BreakAttack:
+                return "파괴 공격";
+            case CombatActionType.Pierce:
+                return "관통";
+            case CombatActionType.Guard:
+                return "방어";
+            case CombatActionType.TeamWard:
+                return "수호";
+            case CombatActionType.EndTurn:
+                return "턴 종료";
+            case CombatActionType.HeavyBlow:
+                return "강공격";
+            case CombatActionType.LightBlow:
+                return "약공격";
+            case CombatActionType.GroupHeal:
+                return "광역 회복";
+            case CombatActionType.Explosion:
+                return "폭발";
+            case CombatActionType.Spark:
+                return "스파크";
+            default:
+                return "행동";
+        }
     }
 }
