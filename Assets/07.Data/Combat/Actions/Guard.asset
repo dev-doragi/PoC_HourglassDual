@@ -17,4 +17,4 @@ MonoBehaviour:
   sandCost: 2
   breakPower: 0
   threatDelta: 0
-  guardValue: 4
+  guardValue: 5
