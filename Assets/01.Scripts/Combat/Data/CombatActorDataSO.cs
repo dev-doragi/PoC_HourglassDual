@@ -17,6 +17,7 @@ public class CombatActorDataSO : ScriptableObject
     [Header("Stats")]
     [FormerlySerializedAs("maxHp")] public int maxHP = 10;
     [FormerlySerializedAs("baseGuard")] public int maxGuard = 3;
+    public int initialGuard = 0;
     public int speedBase = 1;
 
     [Header("Actions / Intents")]

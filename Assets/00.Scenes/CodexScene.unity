@@ -5203,6 +5203,10 @@ PrefabInstance:
       propertyPath: m_AnchorMax.y
       value: 0
       objectReference: {fileID: 0}
+    - target: {fileID: 3723500391588833228, guid: d05d45645f83be5458392466cb57bcee, type: 3}
+      propertyPath: _groggyText
+      value: 
+      objectReference: {fileID: 0}
     - target: {fileID: 6631860501637556742, guid: d05d45645f83be5458392466cb57bcee, type: 3}
       propertyPath: m_LocalPosition.x
       value: 0
@@ -7793,6 +7797,10 @@ PrefabInstance:
       propertyPath: m_AnchorMax.y
       value: 0
       objectReference: {fileID: 0}
+    - target: {fileID: 3723500391588833228, guid: d05d45645f83be5458392466cb57bcee, type: 3}
+      propertyPath: _groggyText
+      value: 
+      objectReference: {fileID: 0}
     - target: {fileID: 4855830233162479217, guid: d05d45645f83be5458392466cb57bcee, type: 3}
       propertyPath: m_AnchoredPosition.y
       value: -0.000091552734
@@ -7933,6 +7941,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 9b575e58f23c0d94a967c0ac8241b655, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::CombatActionPanelView
+  _pendingTintColor: {r: 1, g: 0.85, b: 0.2, a: 1}
   _basicButton: {fileID: 102474184}
   _basicNameText: {fileID: 1354026638}
   _basicCostText: {fileID: 1723832042}
@@ -8288,11 +8297,13 @@ MonoBehaviour:
   _downerText: {fileID: 1439708521}
   _turnText: {fileID: 1376675283}
   _nextSandText: {fileID: 1824925955}
+  _enemySandText: {fileID: 0}
   _flipDuration: 0.34
   _flipAnglePerTurn: -180
   _textFadeDuration: 0.08
   _sandTweenDuration: 0.16
   _sandTweenEase: 1
+  _enemySandTweenDuration: 0.14
 --- !u!1 &1547812960
 GameObject:
   m_ObjectHideFlags: 0
@@ -10688,6 +10699,10 @@ PrefabInstance:
     - target: {fileID: 3347717789324818283, guid: d05d45645f83be5458392466cb57bcee, type: 3}
       propertyPath: m_AnchorMax.y
       value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 3723500391588833228, guid: d05d45645f83be5458392466cb57bcee, type: 3}
+      propertyPath: _groggyText
+      value: 
       objectReference: {fileID: 0}
     - target: {fileID: 6631860501637556742, guid: d05d45645f83be5458392466cb57bcee, type: 3}
       propertyPath: m_LocalPosition.x

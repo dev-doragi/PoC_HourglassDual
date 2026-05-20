@@ -23,6 +23,7 @@ public class HourglassSandView : MonoBehaviour
     [SerializeField] private float _textFadeDuration = 0.08f;
     [Header("Sand Tween")]
     [SerializeField] private float _sandTweenDuration = 0.16f;
+    [SerializeField] private Ease _sandTweenEase = Ease.Linear;
     [SerializeField] private float _enemySandTweenDuration = 0.14f;
 
     private bool _isFlipped;
@@ -93,7 +94,7 @@ public class HourglassSandView : MonoBehaviour
                 int lower = Mathf.Clamp(state.LowerSand, 0, maxSand);
                 if (upper == _freezeUpper && lower == _freezeLower)
                 {
-                    ApplyTextState(state, lower);
+                    ApplyTextState(state, upper, lower);
                     return;
                 }
 
@@ -204,7 +205,7 @@ public class HourglassSandView : MonoBehaviour
         {
             rotationTween = _rotatingVisualRoot
                 .DOLocalRotate(new Vector3(0f, 0f, _flipAnglePerTurn), Mathf.Clamp(_flipDuration, 0.1f, 1f), RotateMode.LocalAxisAdd)
-                .SetEase(Ease.Linear);
+                .SetEase(Ease.OutCubic);
         }
 
         FadeStaticTextsAsync(0f);
@@ -216,7 +217,7 @@ public class HourglassSandView : MonoBehaviour
             int previewUpper = Mathf.Clamp(stateForRotation.UpperSand, 0, previewMax);
             int previewLower = Mathf.Clamp(stateForRotation.LowerSand, 0, previewMax);
             ApplySandState(previewUpper, previewLower, previewMax, false);
-            ApplyTextState(stateForRotation, previewLower);
+            ApplyTextState(stateForRotation, previewUpper, previewLower);
         }
 
         if (rotationTween != null)
@@ -237,7 +238,7 @@ public class HourglassSandView : MonoBehaviour
             _freezeUpper = Mathf.Clamp(stateToApply.UpperSand, 0, maxSand);
             _freezeLower = Mathf.Clamp(stateToApply.LowerSand, 0, maxSand);
             ApplySandState(_freezeUpper, _freezeLower, maxSand, true);
-            ApplyTextState(stateToApply, _freezeLower);
+            ApplyTextState(stateToApply, _freezeUpper, _freezeLower);
         }
         else
         {
@@ -257,7 +258,7 @@ public class HourglassSandView : MonoBehaviour
         int lower = Mathf.Clamp(state.LowerSand, 0, maxSand);
 
         ApplySandState(upper, lower, maxSand, false);
-        ApplyTextState(state, lower);
+        ApplyTextState(state, upper, lower);
     }
 
     private void SetTurnText(CombatTurnState turnState)
@@ -374,7 +375,7 @@ public class HourglassSandView : MonoBehaviour
 
         _runningSandTweens++;
         slider.DOValue(clampedTarget, duration)
-            .SetEase(Ease.Linear)
+            .SetEase(_sandTweenEase)
             .OnComplete(() => _runningSandTweens = Mathf.Max(0, _runningSandTweens - 1))
             .OnKill(() => _runningSandTweens = Mathf.Max(0, _runningSandTweens - 1));
     }
@@ -389,11 +390,11 @@ public class HourglassSandView : MonoBehaviour
         return _isFlipped ? _upperSlider : _downerSlider;
     }
 
-    private void ApplyTextState(CombatRuntimeState state, int lower)
+    private void ApplyTextState(CombatRuntimeState state, int upper, int lower)
     {
         if (_upperText != null)
         {
-            _upperText.text = Mathf.Max(0, state.UpperSand).ToString();
+            _upperText.text = Mathf.Max(0, upper).ToString();
         }
 
         if (_downerText != null)

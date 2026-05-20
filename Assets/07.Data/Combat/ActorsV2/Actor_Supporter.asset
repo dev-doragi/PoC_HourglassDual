@@ -19,6 +19,7 @@ MonoBehaviour:
   slotIndex: 2
   maxHP: 10
   maxGuard: 3
+  initialGuard: 0
   speedBase: 7
   actionList:
   - {fileID: 11400000, guid: db3215e7c42e4c4982cf4afb19332462, type: 2}

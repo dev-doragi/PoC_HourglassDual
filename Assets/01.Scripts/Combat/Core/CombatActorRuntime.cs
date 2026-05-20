@@ -104,6 +104,7 @@ public class CombatActorRuntime
 
         int safeHp = Mathf.Max(1, data.maxHP);
         int safeGuard = Mathf.Max(0, data.maxGuard);
+        int safeInitialGuard = Mathf.Clamp(data.initialGuard, 0, safeGuard);
 
         CombatActorRuntime runtime = new CombatActorRuntime
         {
@@ -116,7 +117,7 @@ public class CombatActorRuntime
             MaxHp = safeHp,
             CurrentHp = safeHp,
             MaxGuard = safeGuard,
-            GuardValue = safeGuard,
+            GuardValue = safeInitialGuard,
             SpeedBase = Mathf.Max(0, data.speedBase),
             IsSelected = false,
             SkipCurrentAction = false,

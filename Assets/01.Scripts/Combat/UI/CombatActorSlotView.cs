@@ -88,7 +88,7 @@ public class CombatActorSlotView : MonoBehaviour
     {
         if (actor == null)
         {
-            SetBars(0, 1, 0, 1, _teamType == CombatActorType.Enemy);
+            SetBars(0, 1, 0, 1, true);
             SetGroggy(false, string.Empty);
             SetSelected(false);
             SetClickable(false);
@@ -97,7 +97,7 @@ public class CombatActorSlotView : MonoBehaviour
 
         int hpMax = Mathf.Max(1, actor.MaxHp);
         int guardMax = Mathf.Max(1, actor.MaxGuard);
-        bool showGuard = actor.ActorType == CombatActorType.Enemy;
+        bool showGuard = true;
         SetBars(actor.CurrentHp, hpMax, actor.GuardValue, guardMax, showGuard);
         bool showGroggy = actor.BreakSkipCount > 0 || actor.IsBroken;
         SetGroggy(showGroggy, showGroggy ? "GROGGY" : string.Empty);

@@ -9,6 +9,7 @@ public class HourglassCombatManager : Singleton<HourglassCombatManager>
     [SerializeField] private HourglassCombatConfigSO _config;
     [SerializeField] private CombatActionDataSO[] _globalActionCatalog;
     [SerializeField] private float _flipDuration = 0.45f;
+    [SerializeField] private float _postFlipEnemyStartDelay = 0.12f;
     [SerializeField] private float _phaseStepDelay = 0.12f;
     [SerializeField] private float _enemyActionStepDelay = 0.2f;
 
@@ -748,7 +749,8 @@ public class HourglassCombatManager : Singleton<HourglassCombatManager>
         }
 
         ApplyMinimumFallAndFlip();
-        yield return new WaitForSeconds(Mathf.Max(_phaseStepDelay, _flipDuration));
+        float firstFlipDelay = Mathf.Max(_phaseStepDelay, _flipDuration) + Mathf.Max(0f, _postFlipEnemyStartDelay);
+        yield return new WaitForSeconds(firstFlipDelay);
         EvaluateCombatEnd();
         if (RuntimeState.IsCombatEnded)
         {
@@ -828,6 +830,7 @@ public class HourglassCombatManager : Singleton<HourglassCombatManager>
     {
         if (command.TargetType == CombatTargetType.AllAllies)
         {
+            int totalHeal = 0;
             for (int i = 0; i < RuntimeState.Allies.Count; i++)
             {
                 CombatActorRuntime ally = RuntimeState.Allies[i];
@@ -838,11 +841,20 @@ public class HourglassCombatManager : Singleton<HourglassCombatManager>
 
                 if (command.HealAmount > 0)
                 {
+                    int beforeHp = ally.CurrentHp;
                     ally.Heal(command.HealAmount);
+                    totalHeal += Mathf.Max(0, ally.CurrentHp - beforeHp);
+                }
+
+                if (command.GuardGain > 0)
+                {
+                    int beforeGuard = ally.GuardValue;
+                    ally.AddGuard(command.GuardGain);
+                    PublishGuardChangedIfNeeded(ally, beforeGuard, ally.GuardValue);
                 }
             }
 
-            return new CombatActionResult(command.ActionType, true, 0, 0, 0, false, false);
+            return new CombatActionResult(command.ActionType, true, 0, 0, totalHeal, false, false);
         }
 
         if (command.TargetType == CombatTargetType.Self || command.TargetType == CombatTargetType.SingleAlly)
@@ -856,6 +868,13 @@ public class HourglassCombatManager : Singleton<HourglassCombatManager>
             if (command.HealAmount > 0)
             {
                 allyTarget.Heal(command.HealAmount);
+            }
+
+            if (command.GuardGain > 0)
+            {
+                int beforeGuard = allyTarget.GuardValue;
+                allyTarget.AddGuard(command.GuardGain);
+                PublishGuardChangedIfNeeded(allyTarget, beforeGuard, allyTarget.GuardValue);
             }
 
             return new CombatActionResult(command.ActionType, true, 0, 0, 0, false, false);
@@ -1022,14 +1041,23 @@ public class HourglassCombatManager : Singleton<HourglassCombatManager>
             usedFallback = true;
         }
 
-        RuntimeState.EnemySand = Mathf.Max(0, RuntimeState.EnemySand - resolvedIntent.EffectiveCost);
+        int spentEnemySand = Mathf.Max(0, resolvedIntent.EffectiveCost);
+        RuntimeState.EnemySand = Mathf.Max(0, RuntimeState.EnemySand - spentEnemySand);
+
+        // Shared hourglass resource: enemy spend also moves sand from upper to lower.
+        int unlockedSand = Mathf.Max(1, RuntimeState.TotalSand - RuntimeState.LockedSand);
+        int transferable = Mathf.Clamp(spentEnemySand, 0, RuntimeState.UpperSand);
+        RuntimeState.UpperSand = Mathf.Clamp(RuntimeState.UpperSand - transferable, 0, unlockedSand);
+        RuntimeState.LowerSand = Mathf.Clamp(RuntimeState.LowerSand + transferable, 0, unlockedSand);
+
+        int appliedEnemySpend = Mathf.Max(0, enemySandBefore - RuntimeState.EnemySand);
         PublishEnemySandChanged(
             enemy.ActorId,
             resolvedIntent.ActionType,
             string.IsNullOrWhiteSpace(resolvedIntent.DisplayName) ? resolvedIntent.ActionType.ToString() : resolvedIntent.DisplayName,
             enemySandBefore,
             RuntimeState.EnemySand,
-            Mathf.Max(0, resolvedIntent.EffectiveCost),
+            appliedEnemySpend,
             Mathf.Max(0, resolvedIntent.EffectiveCost),
             usedFallback,
             usedFallback ? "FallbackSpent" : "Spent");
