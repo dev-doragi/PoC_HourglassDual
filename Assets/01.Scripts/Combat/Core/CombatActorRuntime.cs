@@ -1,130 +1,153 @@
 using UnityEngine;
+using System.Collections.Generic;
 
 /// <summary>
-/// Runtime state for a single combat actor.
+/// Runtime state for a single combat actor in 3v3 battle.
 /// </summary>
 public class CombatActorRuntime
 {
+    public int ActorId;
+    public int SlotIndex;
+    public string DisplayName;
     public CombatActorType ActorType;
+    public CombatRoleType RoleType;
+
     public int MaxHp;
     public int CurrentHp;
-    public int MaxActionSand = 10;
-    public int AvailableSand;
-    public int SpentSand;
-    public int TransferredSand;
+    public int MaxGuard;
     public int GuardValue;
-    public int EnemyThreat;
-    public int EnemyGuard;
-    public int MaxEnemyGuard;
-    public bool GroggyPending;
-    public bool GroggyActive;
+    public int SpeedBase;
+
+    public bool IsSelected;
+
+    // Legacy flags kept for UI compatibility.
+    public bool SkipCurrentAction;
+    public bool SkipNextAction;
+    public bool HasActedThisRound;
+    public int BreakSkipCount;
+    public float BreakDelayRatio;
+    public float BaseActionValue;
+    public float CurrentActionValue;
+
+    public readonly List<CombatActionDataSO> ActionList = new List<CombatActionDataSO>(8);
+    public readonly List<EnemyIntentDataSO> EnemyIntentList = new List<EnemyIntentDataSO>(8);
 
     public bool IsDead => CurrentHp <= 0;
+    public bool IsBroken => !IsDead && GuardValue <= 0;
 
-    public bool CanAct => !IsDead && AvailableSand > 0;
-
-    public bool CanSpend(int cost)
+    public void ResetRoundFlags()
     {
-        return cost > 0 && AvailableSand >= cost;
+        HasActedThisRound = false;
+        SkipCurrentAction = BreakSkipCount > 0;
+        SkipNextAction = false;
     }
 
-    public bool SpendSand(int cost)
+    public int ApplyIncomingDamage(int hpDamage)
     {
-        return SpendSand(cost, out _);
-    }
-
-    public bool SpendSand(int cost, out string failureReason)
-    {
-        failureReason = GetSpendFailureReason(cost);
-        if (failureReason != null)
+        int safeDamage = Mathf.Max(0, hpDamage);
+        if (safeDamage == 0 || IsDead)
         {
-            return false;
-        }
-
-        AvailableSand -= cost;
-        SpentSand += cost;
-        TransferredSand += cost;
-        return true;
-    }
-
-    public bool SpendDesperationSand()
-    {
-        return SpendDesperationSand(out _);
-    }
-
-    public bool SpendDesperationSand(out string failureReason)
-    {
-        const int desperationCost = 1;
-        return SpendSand(desperationCost, out failureReason);
-    }
-
-    public int ReceiveSand(int amount, bool applyGroggyReduction, float groggyIncomingSandMultiplier)
-    {
-        if (amount <= 0)
-        {
-            AvailableSand = 0;
             return 0;
         }
 
-        int received = applyGroggyReduction
-            ? Mathf.CeilToInt(amount * groggyIncomingSandMultiplier)
-            : amount;
-
-        if (received < 0)
-        {
-            received = 0;
-        }
-
-        AvailableSand = received;
-        return received;
+        CurrentHp = Mathf.Max(0, CurrentHp - safeDamage);
+        return safeDamage;
     }
 
-    public void ConsumeTurnSand()
+    public int ApplyBreakDamage(int breakDamage)
     {
-        SpentSand = 0;
-        TransferredSand = 0;
+        int safeBreak = Mathf.Max(0, breakDamage);
+        if (safeBreak == 0 || IsDead)
+        {
+            return 0;
+        }
+
+        int before = GuardValue;
+        GuardValue = Mathf.Max(0, GuardValue - safeBreak);
+        return Mathf.Max(0, before - GuardValue);
     }
 
-    public string GetSpendFailureReason(int cost)
+    public int AddGuard(int amount)
     {
-        if (cost <= 0)
+        int safeAmount = Mathf.Max(0, amount);
+        if (safeAmount == 0 || IsDead)
         {
-            return "Cost must be greater than zero.";
+            return GuardValue;
         }
 
-        if (AvailableSand < cost)
-        {
-            return "AvailableSand insufficient";
-        }
-
-        return null;
+        GuardValue = Mathf.Clamp(GuardValue + safeAmount, 0, Mathf.Max(1, MaxGuard));
+        return GuardValue;
     }
 
-    public static CombatActorRuntime CreateFromData(CombatActorDataSO data, int initialSand, int maxActionSand, int initialEnemyGuard = 0)
+    public int Heal(int amount)
+    {
+        int safeAmount = Mathf.Max(0, amount);
+        if (safeAmount == 0 || IsDead)
+        {
+            return CurrentHp;
+        }
+
+        CurrentHp = Mathf.Clamp(CurrentHp + safeAmount, 0, Mathf.Max(1, MaxHp));
+        return CurrentHp;
+    }
+
+    public static CombatActorRuntime Create(
+        CombatActorDataSO data,
+        CombatActorType expectedTeamType,
+        int fallbackSlotIndex)
     {
         if (data == null)
         {
             return null;
         }
 
-        bool isEnemy = data.actorType == CombatActorType.Enemy;
-        int safeInitialEnemyGuard = Mathf.Max(0, initialEnemyGuard);
+        int safeHp = Mathf.Max(1, data.maxHP);
+        int safeGuard = Mathf.Max(0, data.maxGuard);
 
-        return new CombatActorRuntime
+        CombatActorRuntime runtime = new CombatActorRuntime
         {
-            ActorType = data.actorType,
-            MaxHp = data.maxHp,
-            CurrentHp = data.maxHp,
-            MaxActionSand = maxActionSand,
-            AvailableSand = initialSand,
-            SpentSand = 0,
-            TransferredSand = 0,
-            GuardValue = data.baseGuard,
-            EnemyThreat = 0,
-            EnemyGuard = isEnemy ? safeInitialEnemyGuard : 0,
-            MaxEnemyGuard = isEnemy ? safeInitialEnemyGuard : 0,
-            GroggyPending = false,
-            GroggyActive = false
+            ActorId = data.actorId,
+            SlotIndex = Mathf.Max(0, data.slotIndex >= 0 ? data.slotIndex : fallbackSlotIndex),
+            DisplayName = string.IsNullOrWhiteSpace(data.displayName) ? data.name : data.displayName,
+            ActorType = data.teamType == CombatActorType.None ? expectedTeamType : data.teamType,
+            RoleType = data.roleType,
+            MaxHp = safeHp,
+            CurrentHp = safeHp,
+            MaxGuard = safeGuard,
+            GuardValue = safeGuard,
+            SpeedBase = Mathf.Max(0, data.speedBase),
+            IsSelected = false,
+            SkipCurrentAction = false,
+            SkipNextAction = false,
+            HasActedThisRound = false,
+            BreakSkipCount = 0,
+            BreakDelayRatio = 0.25f,
+            BaseActionValue = data.speedBase > 0 ? (10000f / data.speedBase) : 10000f,
+            CurrentActionValue = data.speedBase > 0 ? (10000f / data.speedBase) : 10000f
         };
+
+        if (data.actionList != null)
+        {
+            for (int i = 0; i < data.actionList.Length; i++)
+            {
+                if (data.actionList[i] != null)
+                {
+                    runtime.ActionList.Add(data.actionList[i]);
+                }
+            }
+        }
+
+        if (data.enemyIntentList != null)
+        {
+            for (int i = 0; i < data.enemyIntentList.Length; i++)
+            {
+                if (data.enemyIntentList[i] != null)
+                {
+                    runtime.EnemyIntentList.Add(data.enemyIntentList[i]);
+                }
+            }
+        }
+
+        return runtime;
     }
 }

@@ -1,11 +1,10 @@
-﻿using DG.Tweening;
+using DG.Tweening;
 using TMPro;
 using UnityEngine;
-using UnityEngine.Serialization;
 using UnityEngine.UI;
 
 /// <summary>
-/// Renders player or enemy status widgets and lightweight actor feedback animations.
+/// Renders actor status and lightweight feedback animations.
 /// </summary>
 public class CombatActorPanelView : MonoBehaviour
 {
@@ -17,7 +16,6 @@ public class CombatActorPanelView : MonoBehaviour
     [SerializeField] private Slider _hpBar;
     [SerializeField] private TMP_Text _guardText;
     [SerializeField] private Slider _guardBar;
-    [FormerlySerializedAs("_prepBar")]
     [SerializeField] private Slider _threatBar;
     [SerializeField] private TMP_Text _groggyText;
     [SerializeField] private TMP_Text _warningText;
@@ -42,37 +40,37 @@ public class CombatActorPanelView : MonoBehaviour
         _hitFlash?.DOKill();
     }
 
-    public void ApplyPlayerState(CombatActorRuntime player, bool isCurrentTurn, float guardBarMax)
+    public void ApplyActorState(CombatActorRuntime actor, bool isCurrentTurn, bool isAlly)
     {
         CacheVisualDefaults();
-        if (player == null)
+        if (actor == null)
         {
             return;
         }
 
         if (_hpText != null)
         {
-            _hpText.text = $"{player.CurrentHp}/{Mathf.Max(1, player.MaxHp)}";
+            _hpText.text = $"{actor.DisplayName}  HP {actor.CurrentHp}/{Mathf.Max(1, actor.MaxHp)}";
         }
 
         if (_hpBar != null)
         {
             _hpBar.minValue = 0f;
-            _hpBar.maxValue = Mathf.Max(1f, player.MaxHp);
-            _hpBar.value = Mathf.Clamp(player.CurrentHp, 0, player.MaxHp);
+            _hpBar.maxValue = Mathf.Max(1f, actor.MaxHp);
+            _hpBar.value = Mathf.Clamp(actor.CurrentHp, 0, actor.MaxHp);
             _hpBar.interactable = false;
         }
 
         if (_guardText != null)
         {
-            _guardText.text = $"{player.GuardValue}";
+            _guardText.text = $"Guard {actor.GuardValue}/{Mathf.Max(0, actor.MaxGuard)}";
         }
 
         if (_guardBar != null)
         {
             _guardBar.minValue = 0f;
-            _guardBar.maxValue = Mathf.Max(1f, guardBarMax);
-            _guardBar.value = Mathf.Clamp(player.GuardValue, 0f, _guardBar.maxValue);
+            _guardBar.maxValue = Mathf.Max(1f, actor.MaxGuard);
+            _guardBar.value = Mathf.Clamp(actor.GuardValue, 0f, _guardBar.maxValue);
             _guardBar.interactable = false;
         }
 
@@ -86,85 +84,26 @@ public class CombatActorPanelView : MonoBehaviour
 
         if (_groggyText != null)
         {
-            _groggyText.text = string.Empty;
+            _groggyText.text = actor.SkipCurrentAction || actor.SkipNextAction ? "Break Skip" : string.Empty;
         }
 
         if (_warningText != null)
         {
-            _warningText.text = string.Empty;
+            _warningText.text = actor.IsDead ? "DEAD" : (isAlly ? string.Empty : (actor.GuardValue <= 0 ? "BROKEN" : string.Empty));
         }
 
         ApplyTurnVisual(isCurrentTurn);
     }
 
+    // Backward-compatible wrappers.
+    public void ApplyPlayerState(CombatActorRuntime player, bool isCurrentTurn, float guardBarMax)
+    {
+        ApplyActorState(player, isCurrentTurn, true);
+    }
+
     public void ApplyEnemyState(CombatActorRuntime enemy, int maxEnemyGuard, int threatCap, bool isCurrentTurn)
     {
-        CacheVisualDefaults();
-        if (enemy == null)
-        {
-            return;
-        }
-
-        int safeMaxEnemyGuard = Mathf.Max(1, maxEnemyGuard);
-        int safeThreatCap = Mathf.Max(1, threatCap);
-        int enemyGuardRemaining = Mathf.Clamp(enemy.EnemyGuard, 0, safeMaxEnemyGuard);
-
-        if (_hpText != null)
-        {
-            _hpText.text = $"{enemy.CurrentHp}/{Mathf.Max(1, enemy.MaxHp)}";
-        }
-
-        if (_hpBar != null)
-        {
-            _hpBar.minValue = 0f;
-            _hpBar.maxValue = Mathf.Max(1f, enemy.MaxHp);
-            _hpBar.value = Mathf.Clamp(enemy.CurrentHp, 0, enemy.MaxHp);
-            _hpBar.interactable = false;
-        }
-
-        if (_guardText != null)
-        {
-            _guardText.text = $"{enemyGuardRemaining}/{safeMaxEnemyGuard}";
-        }
-
-        if (_guardBar != null)
-        {
-            _guardBar.minValue = 0f;
-            _guardBar.maxValue = safeMaxEnemyGuard;
-            _guardBar.value = enemyGuardRemaining;
-            _guardBar.interactable = false;
-        }
-
-        if (_threatBar != null)
-        {
-            _threatBar.minValue = 0f;
-            _threatBar.maxValue = safeThreatCap;
-            _threatBar.value = Mathf.Clamp(enemy.EnemyThreat, 0, safeThreatCap);
-            _threatBar.interactable = false;
-        }
-
-        if (_groggyText != null)
-        {
-            if (enemy.GroggyActive)
-            {
-                _groggyText.text = "!!그로기!!";
-            }
-            else if (enemy.GroggyPending)
-            {
-                _groggyText.text = "다음 턴 그로기";
-            }
-            else
-            {
-                _groggyText.text = string.Empty;
-            }
-        }
-
-        if (_warningText != null)
-        {
-            _warningText.text = enemy.EnemyThreat >= safeThreatCap ? "!!위협 최대!!" : string.Empty;
-        }
-
-        ApplyTurnVisual(isCurrentTurn);
+        ApplyActorState(enemy, isCurrentTurn, false);
     }
 
     public void PlayAttackLunge(float direction)
@@ -272,4 +211,3 @@ public class CombatActorPanelView : MonoBehaviour
         _visualCached = true;
     }
 }
-

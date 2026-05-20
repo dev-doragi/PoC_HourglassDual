@@ -8,7 +8,6 @@ public class CombatView : MonoBehaviour
     [SerializeField] private Transform enemyPivot;
     [SerializeField] private SpriteRenderer playerSpriteRenderer;
     [SerializeField] private SpriteRenderer enemySpriteRenderer;
-    [SerializeField] private bool enemyGroggyVisualLocked;
 
     private HourglassCombatManager _combatManager;
     private CombatActorDataSO _playerData;
@@ -20,17 +19,15 @@ public class CombatView : MonoBehaviour
 
     private void Awake()
     {
-        ValidateReferences();
         CacheInitialLocalPositions();
     }
 
     private void OnEnable()
     {
-        EventBus.Instance.Subscribe<CombatStartedEvent>(OnCombatStarted);
-        EventBus.Instance.Subscribe<CombatTurnStartedEvent>(OnCombatTurnStarted);
-        EventBus.Instance.Subscribe<CombatActionExecutedEvent>(OnCombatActionExecuted);
+        EventBus.Instance.Subscribe<CombatRoundStartedEvent>(OnCombatRoundStarted);
+        EventBus.Instance.Subscribe<CombatTimelineEntryResolvedEvent>(OnCombatTimelineEntryResolved);
         EventBus.Instance.Subscribe<CombatActorDamagedEvent>(OnCombatActorDamaged);
-        EventBus.Instance.Subscribe<CombatGroggyAppliedEvent>(OnCombatGroggyApplied);
+        EventBus.Instance.Subscribe<CombatActorKilledEvent>(OnCombatActorKilled);
         EventBus.Instance.Subscribe<CombatEndedEvent>(OnCombatEnded);
     }
 
@@ -42,123 +39,102 @@ public class CombatView : MonoBehaviour
 
     private void OnDisable()
     {
-        EventBus.Instance.Unsubscribe<CombatStartedEvent>(OnCombatStarted);
-        EventBus.Instance.Unsubscribe<CombatTurnStartedEvent>(OnCombatTurnStarted);
-        EventBus.Instance.Unsubscribe<CombatActionExecutedEvent>(OnCombatActionExecuted);
+        EventBus.Instance.Unsubscribe<CombatRoundStartedEvent>(OnCombatRoundStarted);
+        EventBus.Instance.Unsubscribe<CombatTimelineEntryResolvedEvent>(OnCombatTimelineEntryResolved);
         EventBus.Instance.Unsubscribe<CombatActorDamagedEvent>(OnCombatActorDamaged);
-        EventBus.Instance.Unsubscribe<CombatGroggyAppliedEvent>(OnCombatGroggyApplied);
+        EventBus.Instance.Unsubscribe<CombatActorKilledEvent>(OnCombatActorKilled);
         EventBus.Instance.Unsubscribe<CombatEndedEvent>(OnCombatEnded);
         KillAllSequences();
     }
 
-    private void OnCombatStarted(CombatStartedEvent evt)
+    private void OnCombatRoundStarted(CombatRoundStartedEvent evt)
     {
         CacheCombatManager();
         CacheActorData();
-        KillAllSequences();
-        enemyGroggyVisualLocked = false;
-
-        InitializeActorVisual(CombatActorType.Player);
+        InitializeActorVisual(CombatActorType.Ally);
         InitializeActorVisual(CombatActorType.Enemy);
     }
 
-    private void OnCombatActionExecuted(CombatActionExecutedEvent evt)
+    private void OnCombatTimelineEntryResolved(CombatTimelineEntryResolvedEvent evt)
     {
-        if (evt.Snapshot.action_type == CombatActionType.EndTurn)
+        if (!evt.Succeeded)
         {
             return;
         }
 
-        if (evt.Snapshot.actor == CombatActorType.Player)
+        if (evt.Entry.side == CombatTimelineSide.Ally)
         {
-            PlayAttackSequence(CombatActorType.Player, evt.Snapshot.player_hp > 0);
+            PlayAttackSequence(CombatActorType.Ally);
         }
-        else if (evt.Snapshot.actor == CombatActorType.Enemy)
+        else
         {
-            PlayAttackSequence(CombatActorType.Enemy, evt.Snapshot.enemy_hp > 0);
+            PlayAttackSequence(CombatActorType.Enemy);
         }
-    }
-
-    private void OnCombatTurnStarted(CombatTurnStartedEvent evt)
-    {
-        if (enemyGroggyVisualLocked && evt.Snapshot.turn_state == CombatTurnState.EnemyTurn)
-        {
-            enemyGroggyVisualLocked = false;
-            SpriteRenderer enemyRenderer = GetRenderer(CombatActorType.Enemy);
-            if (enemyRenderer != null && _enemyData != null && evt.Snapshot.enemy_hp > 0)
-            {
-                ApplySpriteIfExists(enemyRenderer, _enemyData.idleSprite);
-            }
-        }
-
-        if (enemyGroggyVisualLocked)
-        {
-            return;
-        }
-
-        UpdateEnemyGroggyVisualFromSnapshot(evt.Snapshot);
     }
 
     private void OnCombatActorDamaged(CombatActorDamagedEvent evt)
     {
-        if (evt.Snapshot.actor == CombatActorType.Player)
+        CombatActorType side = ResolveActorType(evt.Snapshot, evt.ActorId);
+        if (side == CombatActorType.Ally)
         {
-            PlayHitSequence(CombatActorType.Player, evt.Snapshot.player_hp <= 0);
+            PlayHitSequence(CombatActorType.Ally, IsAlliesWiped(evt.Snapshot));
         }
-        else if (evt.Snapshot.actor == CombatActorType.Enemy)
+        else if (side == CombatActorType.Enemy)
         {
-            PlayHitSequence(CombatActorType.Enemy, evt.Snapshot.enemy_hp <= 0);
+            PlayHitSequence(CombatActorType.Enemy, IsEnemiesWiped(evt.Snapshot));
         }
     }
 
-    private void OnCombatGroggyApplied(CombatGroggyAppliedEvent evt)
+    private void OnCombatActorKilled(CombatActorKilledEvent evt)
     {
-        if (evt.Snapshot.actor != CombatActorType.Enemy)
+        CombatActorType side = ResolveActorType(evt.Snapshot, evt.ActorId);
+        if (side == CombatActorType.Ally && IsAlliesWiped(evt.Snapshot))
         {
-            return;
+            PlayDeathSequence(CombatActorType.Ally);
         }
-
-        SpriteRenderer renderer = GetRenderer(CombatActorType.Enemy);
-        if (renderer == null || _enemyData == null)
+        else if (side == CombatActorType.Enemy && IsEnemiesWiped(evt.Snapshot))
         {
-            return;
+            PlayDeathSequence(CombatActorType.Enemy);
         }
-
-        enemyGroggyVisualLocked = true;
-        ApplySpriteIfExists(renderer, _enemyData.groggySprite);
     }
 
     private void OnCombatEnded(CombatEndedEvent evt)
     {
-        enemyGroggyVisualLocked = false;
         if (evt.PlayerWon)
         {
             PlayDeathSequence(CombatActorType.Enemy);
-            return;
         }
-
-        PlayDeathSequence(CombatActorType.Player);
+        else
+        {
+            PlayDeathSequence(CombatActorType.Ally);
+        }
     }
 
-    private void UpdateEnemyGroggyVisualFromSnapshot(CombatLogSnapshot snapshot)
+    private void CacheCombatManager()
     {
-        SpriteRenderer renderer = GetRenderer(CombatActorType.Enemy);
-        if (renderer == null || _enemyData == null)
+        if (_combatManager != null)
         {
             return;
         }
 
-        bool isGroggy = snapshot.enemy_groggy_pending || snapshot.enemy_groggy_active;
-        if (isGroggy)
+        _combatManager = HourglassCombatManager.Instance;
+    }
+
+    private void CacheActorData()
+    {
+        if (_combatManager == null)
         {
-            ApplySpriteIfExists(renderer, _enemyData.groggySprite);
             return;
         }
 
-        if (snapshot.enemy_hp > 0)
-        {
-            ApplySpriteIfExists(renderer, _enemyData.idleSprite);
-        }
+        _playerData = _combatManager.PlayerData;
+        _enemyData = _combatManager.EnemyData;
+    }
+
+    private void CacheInitialLocalPositions()
+    {
+        _playerInitialLocalPosition = playerPivot != null ? playerPivot.localPosition : Vector3.zero;
+        _enemyInitialLocalPosition = enemyPivot != null ? enemyPivot.localPosition : Vector3.zero;
     }
 
     private void InitializeActorVisual(CombatActorType actorType)
@@ -179,13 +155,13 @@ public class CombatView : MonoBehaviour
             pivot.localPosition = initialLocalPosition;
         }
 
-        if (renderer != null && data != null)
+        if (renderer != null && data != null && data.idleSprite != null)
         {
-            ApplySpriteIfExists(renderer, data.idleSprite);
+            renderer.sprite = data.idleSprite;
         }
     }
 
-    private void PlayAttackSequence(CombatActorType actorType, bool actorAliveAfterSequence)
+    private void PlayAttackSequence(CombatActorType actorType)
     {
         Transform pivot = GetPivot(actorType);
         SpriteRenderer renderer = GetRenderer(actorType);
@@ -197,18 +173,21 @@ public class CombatView : MonoBehaviour
         }
 
         KillSequence(actorType);
-        ApplySpriteIfExists(renderer, data.attackSprite);
+        if (data.attackSprite != null)
+        {
+            renderer.sprite = data.attackSprite;
+        }
 
-        Vector3 directionOffset = actorType == CombatActorType.Player ? data.attackMoveOffset : -data.attackMoveOffset;
+        Vector3 directionOffset = actorType == CombatActorType.Ally ? data.attackMoveOffset : -data.attackMoveOffset;
         Sequence sequence = DOTween.Sequence();
         sequence.Append(pivot.DOLocalMove(initialLocalPosition + directionOffset, Mathf.Max(0f, data.attackMoveDuration)).SetEase(Ease.OutQuad));
         sequence.Append(pivot.DOLocalMove(initialLocalPosition, Mathf.Max(0f, data.attackReturnDuration)).SetEase(Ease.InQuad));
         sequence.OnComplete(() =>
         {
             pivot.localPosition = initialLocalPosition;
-            if (actorAliveAfterSequence)
+            if (data.idleSprite != null)
             {
-                ApplySpriteIfExists(renderer, data.idleSprite);
+                renderer.sprite = data.idleSprite;
             }
         });
 
@@ -227,7 +206,10 @@ public class CombatView : MonoBehaviour
         }
 
         KillSequence(actorType);
-        ApplySpriteIfExists(renderer, data.hitSprite);
+        if (data.hitSprite != null)
+        {
+            renderer.sprite = data.hitSprite;
+        }
 
         Sequence sequence = DOTween.Sequence();
         sequence.Append(pivot.DOShakePosition(
@@ -244,16 +226,9 @@ public class CombatView : MonoBehaviour
             {
                 PlayDeathSequence(actorType);
             }
-            else
+            else if (data.idleSprite != null)
             {
-                if (actorType == CombatActorType.Enemy && enemyGroggyVisualLocked)
-                {
-                    ApplySpriteIfExists(renderer, data.groggySprite);
-                }
-                else
-                {
-                    ApplySpriteIfExists(renderer, data.idleSprite);
-                }
+                renderer.sprite = data.idleSprite;
             }
         });
 
@@ -270,7 +245,10 @@ public class CombatView : MonoBehaviour
         }
 
         KillSequence(actorType);
-        ApplySpriteIfExists(renderer, data.deathSprite);
+        if (data.deathSprite != null)
+        {
+            renderer.sprite = data.deathSprite;
+        }
 
         Sequence sequence = DOTween.Sequence();
         sequence.Append(DOTween.To(
@@ -289,210 +267,39 @@ public class CombatView : MonoBehaviour
         SetSequence(actorType, sequence);
     }
 
-    private void CacheCombatManager()
-    {
-        if (_combatManager != null)
-        {
-            return;
-        }
-
-        _combatManager = HourglassCombatManager.Instance;
-        if (_combatManager == null)
-        {
-            Debug.LogError("[CombatView] HourglassCombatManager.Instance is null.", this);
-        }
-    }
-
-    private void CacheActorData()
-    {
-        if (_combatManager == null)
-        {
-            Debug.LogError("[CombatView] Cannot cache actor data because combat manager is null.", this);
-            return;
-        }
-
-        _playerData = _combatManager.PlayerData;
-        _enemyData = _combatManager.EnemyData;
-
-        if (_playerData == null)
-        {
-            Debug.LogError("[CombatView] PlayerData is null.", this);
-        }
-
-        if (_enemyData == null)
-        {
-            Debug.LogError("[CombatView] EnemyData is null.", this);
-        }
-    }
-
-    private void CacheInitialLocalPositions()
-    {
-        if (playerPivot != null)
-        {
-            _playerInitialLocalPosition = playerPivot.localPosition;
-        }
-        else
-        {
-            Debug.LogError("[CombatView] playerPivot is not assigned.", this);
-        }
-
-        if (enemyPivot != null)
-        {
-            _enemyInitialLocalPosition = enemyPivot.localPosition;
-        }
-        else
-        {
-            Debug.LogError("[CombatView] enemyPivot is not assigned.", this);
-        }
-    }
-
-    private void ValidateReferences()
-    {
-        if (playerPivot == null)
-        {
-            Debug.LogError("[CombatView] playerPivot is not assigned.", this);
-        }
-
-        if (enemyPivot == null)
-        {
-            Debug.LogError("[CombatView] enemyPivot is not assigned.", this);
-        }
-
-        if (playerSpriteRenderer == null)
-        {
-            Debug.LogError("[CombatView] playerSpriteRenderer is not assigned.", this);
-        }
-
-        if (enemySpriteRenderer == null)
-        {
-            Debug.LogError("[CombatView] enemySpriteRenderer is not assigned.", this);
-        }
-    }
-
     private Transform GetPivot(CombatActorType actorType)
     {
-        if (actorType == CombatActorType.Player)
-        {
-            if (playerPivot == null)
-            {
-                Debug.LogError("[CombatView] playerPivot is not assigned.", this);
-            }
-
-            return playerPivot;
-        }
-
-        if (actorType == CombatActorType.Enemy)
-        {
-            if (enemyPivot == null)
-            {
-                Debug.LogError("[CombatView] enemyPivot is not assigned.", this);
-            }
-
-            return enemyPivot;
-        }
-
-        Debug.LogError($"[CombatView] Unsupported actor type: {actorType}", this);
-        return null;
+        return actorType == CombatActorType.Enemy ? enemyPivot : playerPivot;
     }
 
     private SpriteRenderer GetRenderer(CombatActorType actorType)
     {
-        if (actorType == CombatActorType.Player)
-        {
-            if (playerSpriteRenderer == null)
-            {
-                Debug.LogError("[CombatView] playerSpriteRenderer is not assigned.", this);
-            }
-
-            return playerSpriteRenderer;
-        }
-
-        if (actorType == CombatActorType.Enemy)
-        {
-            if (enemySpriteRenderer == null)
-            {
-                Debug.LogError("[CombatView] enemySpriteRenderer is not assigned.", this);
-            }
-
-            return enemySpriteRenderer;
-        }
-
-        Debug.LogError($"[CombatView] Unsupported actor type: {actorType}", this);
-        return null;
+        return actorType == CombatActorType.Enemy ? enemySpriteRenderer : playerSpriteRenderer;
     }
 
     private CombatActorDataSO GetActorData(CombatActorType actorType)
     {
-        if (actorType == CombatActorType.Player)
-        {
-            if (_playerData == null)
-            {
-                Debug.LogError("[CombatView] Cached player actor data is null.", this);
-            }
-
-            return _playerData;
-        }
-
-        if (actorType == CombatActorType.Enemy)
-        {
-            if (_enemyData == null)
-            {
-                Debug.LogError("[CombatView] Cached enemy actor data is null.", this);
-            }
-
-            return _enemyData;
-        }
-
-        Debug.LogError($"[CombatView] Unsupported actor type: {actorType}", this);
-        return null;
+        return actorType == CombatActorType.Enemy ? _enemyData : _playerData;
     }
 
     private Vector3 GetInitialLocalPosition(CombatActorType actorType)
     {
-        if (actorType == CombatActorType.Player)
-        {
-            return _playerInitialLocalPosition;
-        }
-
-        if (actorType == CombatActorType.Enemy)
-        {
-            return _enemyInitialLocalPosition;
-        }
-
-        Debug.LogError($"[CombatView] Unsupported actor type: {actorType}", this);
-        return Vector3.zero;
+        return actorType == CombatActorType.Enemy ? _enemyInitialLocalPosition : _playerInitialLocalPosition;
     }
 
     private void SetSequence(CombatActorType actorType, Sequence sequence)
     {
-        if (actorType == CombatActorType.Player)
-        {
-            _playerSequence = sequence;
-            return;
-        }
-
         if (actorType == CombatActorType.Enemy)
         {
             _enemySequence = sequence;
             return;
         }
 
-        Debug.LogError($"[CombatView] Unsupported actor type: {actorType}", this);
+        _playerSequence = sequence;
     }
 
     private void KillSequence(CombatActorType actorType)
     {
-        if (actorType == CombatActorType.Player)
-        {
-            if (_playerSequence != null)
-            {
-                _playerSequence.Kill(false);
-                _playerSequence = null;
-            }
-
-            return;
-        }
-
         if (actorType == CombatActorType.Enemy)
         {
             if (_enemySequence != null)
@@ -504,12 +311,16 @@ public class CombatView : MonoBehaviour
             return;
         }
 
-        Debug.LogError($"[CombatView] Unsupported actor type: {actorType}", this);
+        if (_playerSequence != null)
+        {
+            _playerSequence.Kill(false);
+            _playerSequence = null;
+        }
     }
 
     private void KillAllSequences()
     {
-        KillSequence(CombatActorType.Player);
+        KillSequence(CombatActorType.Ally);
         KillSequence(CombatActorType.Enemy);
     }
 
@@ -517,7 +328,6 @@ public class CombatView : MonoBehaviour
     {
         if (renderer == null)
         {
-            Debug.LogError("[CombatView] SpriteRenderer is null while setting alpha.");
             return;
         }
 
@@ -526,19 +336,50 @@ public class CombatView : MonoBehaviour
         renderer.color = color;
     }
 
-    private static void ApplySpriteIfExists(SpriteRenderer renderer, Sprite sprite)
+    private static CombatActorType ResolveActorType(CombatLogSnapshot snapshot, int actorId)
     {
-        if (renderer == null)
+        for (int i = 0; i < snapshot.allies.Length; i++)
         {
-            Debug.LogError("[CombatView] SpriteRenderer is null while applying sprite.");
-            return;
+            if (snapshot.allies[i].actor_id == actorId)
+            {
+                return CombatActorType.Ally;
+            }
         }
 
-        if (sprite == null)
+        for (int i = 0; i < snapshot.enemies.Length; i++)
         {
-            return;
+            if (snapshot.enemies[i].actor_id == actorId)
+            {
+                return CombatActorType.Enemy;
+            }
         }
 
-        renderer.sprite = sprite;
+        return CombatActorType.None;
+    }
+
+    private static bool IsAlliesWiped(CombatLogSnapshot snapshot)
+    {
+        for (int i = 0; i < snapshot.allies.Length; i++)
+        {
+            if (!snapshot.allies[i].is_dead)
+            {
+                return false;
+            }
+        }
+
+        return snapshot.allies.Length > 0;
+    }
+
+    private static bool IsEnemiesWiped(CombatLogSnapshot snapshot)
+    {
+        for (int i = 0; i < snapshot.enemies.Length; i++)
+        {
+            if (!snapshot.enemies[i].is_dead)
+            {
+                return false;
+            }
+        }
+
+        return snapshot.enemies.Length > 0;
     }
 }

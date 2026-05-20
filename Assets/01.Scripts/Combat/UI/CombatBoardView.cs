@@ -1,0 +1,105 @@
+using UnityEngine;
+
+public class CombatBoardView : MonoBehaviour
+{
+    [SerializeField] private CombatActorSlotView[] _allySlots;
+    [SerializeField] private CombatActorSlotView[] _enemySlots;
+
+    private HourglassCombatManager _manager;
+
+    public void Bind(HourglassCombatManager manager)
+    {
+        _manager = manager;
+        BindSlots(_allySlots, CombatActorType.Ally);
+        BindSlots(_enemySlots, CombatActorType.Enemy);
+    }
+
+    public void Refresh(CombatRuntimeState state)
+    {
+        if (state == null)
+        {
+            return;
+        }
+
+        RefreshSide(_allySlots, state.Allies, state.SelectedAllySlot, state);
+        RefreshEnemySide(_enemySlots, state.Enemies, state.SelectedEnemySlot, state);
+    }
+
+    private void BindSlots(CombatActorSlotView[] slots, CombatActorType teamType)
+    {
+        if (slots == null)
+        {
+            return;
+        }
+
+        for (int i = 0; i < slots.Length; i++)
+        {
+            if (slots[i] != null)
+            {
+                slots[i].Bind(teamType, i, OnSlotSelected);
+            }
+        }
+    }
+
+    private void OnSlotSelected(CombatActorType teamType, int slotIndex)
+    {
+        if (_manager == null)
+        {
+            return;
+        }
+
+        if (teamType == CombatActorType.Ally)
+        {
+            _manager.SelectAllyBySlot(slotIndex);
+            return;
+        }
+
+        _manager.SelectEnemyBySlot(slotIndex);
+    }
+
+    private static void RefreshSide(CombatActorSlotView[] slots, System.Collections.Generic.List<CombatActorRuntime> actors, int selectedSlot, CombatRuntimeState state)
+    {
+        if (slots == null || actors == null)
+        {
+            return;
+        }
+
+        for (int i = 0; i < slots.Length; i++)
+        {
+            CombatActorRuntime actor = i < actors.Count ? actors[i] : null;
+            slots[i]?.ApplyActor(actor, i == selectedSlot, null, true);
+        }
+    }
+
+    private static void RefreshEnemySide(CombatActorSlotView[] slots, System.Collections.Generic.List<CombatActorRuntime> actors, int selectedSlot, CombatRuntimeState state)
+    {
+        if (slots == null || actors == null || state == null)
+        {
+            return;
+        }
+
+        for (int i = 0; i < slots.Length; i++)
+        {
+            CombatActorRuntime actor = i < actors.Count ? actors[i] : null;
+            CombatIntentRuntime? intent = FindIntent(state.EnemyIntents, actor != null ? actor.ActorId : -1);
+            int predictedEnemySand = state.TurnState == CombatTurnState.PlayerCommand
+                ? Mathf.Max(state.MinimumFall, state.LowerSand + state.PlayerSpend)
+                : state.EnemySand;
+            bool affordable = !intent.HasValue || predictedEnemySand >= intent.Value.EffectiveCost;
+            slots[i]?.ApplyActor(actor, i == selectedSlot, intent, affordable);
+        }
+    }
+
+    private static CombatIntentRuntime? FindIntent(System.Collections.Generic.List<CombatIntentRuntime> intents, int actorId)
+    {
+        for (int i = 0; i < intents.Count; i++)
+        {
+            if (intents[i].SourceActorId == actorId)
+            {
+                return intents[i];
+            }
+        }
+
+        return null;
+    }
+}

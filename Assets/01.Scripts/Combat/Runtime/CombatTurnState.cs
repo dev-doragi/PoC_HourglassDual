@@ -1,8 +1,10 @@
 public enum CombatTurnState
 {
     None = 0,
-    PlayerTurn = 1,
-    EnemyTurn = 2,
-    Resolving = 3,
-    Ended = 4
+    RoundStart = 1,
+    PlayerCommand = 2,
+    PlayerResolving = 3,
+    Flipping = 4,
+    EnemyResolving = 5,
+    Ended = 6
 }

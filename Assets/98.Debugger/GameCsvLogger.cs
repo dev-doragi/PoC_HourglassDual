@@ -153,16 +153,27 @@ public class GameCsvLogger : MonoBehaviour
         EventBus.Instance.Subscribe<HitStopRequestedEvent>(OnHitStopRequested);
         EventBus.Instance.Subscribe<SlowMotionRequestedEvent>(OnSlowMotionRequested);
 
-        EventBus.Instance.Subscribe<CombatStartedEvent>(OnCombatStarted);
-        EventBus.Instance.Subscribe<CombatTurnStartedEvent>(OnCombatTurnStarted);
-        EventBus.Instance.Subscribe<CombatActionRequestedEvent>(OnCombatActionRequested);
-        EventBus.Instance.Subscribe<CombatActionExecutedEvent>(OnCombatActionExecuted);
+        EventBus.Instance.Subscribe<CombatRoundStartedEvent>(OnCombatRoundStarted);
+        EventBus.Instance.Subscribe<CombatIntentShownEvent>(OnCombatIntentShown);
+        EventBus.Instance.Subscribe<CombatCommandQueuedEvent>(OnCombatCommandQueued);
+        EventBus.Instance.Subscribe<CombatCommandConfirmedEvent>(OnCombatCommandConfirmed);
+        EventBus.Instance.Subscribe<CombatAllyCommandResolvedEvent>(OnCombatAllyCommandResolved);
+        EventBus.Instance.Subscribe<CombatHourglassFlippedEvent>(OnCombatHourglassFlipped);
+        EventBus.Instance.Subscribe<CombatEnemyOrderChangedEvent>(OnCombatEnemyOrderChanged);
+        EventBus.Instance.Subscribe<CombatEnemyOrderEntryResolvedEvent>(OnCombatEnemyOrderEntryResolved);
+        EventBus.Instance.Subscribe<CombatTimelinePreviewChangedEvent>(OnCombatTimelinePreviewChanged);
+        EventBus.Instance.Subscribe<CombatTimelineStartedEvent>(OnCombatTimelineStarted);
+        EventBus.Instance.Subscribe<CombatTimelineEntryResolvedEvent>(OnCombatTimelineEntryResolved);
+        EventBus.Instance.Subscribe<CombatIntentResolvedEvent>(OnCombatIntentResolved);
+        EventBus.Instance.Subscribe<CombatIntentFailedEvent>(OnCombatIntentFailed);
+        EventBus.Instance.Subscribe<CombatActorSelectedEvent>(OnCombatActorSelected);
         EventBus.Instance.Subscribe<CombatActorDamagedEvent>(OnCombatActorDamaged);
-        EventBus.Instance.Subscribe<CombatBreakTriggeredEvent>(OnCombatBreakTriggered);
-        EventBus.Instance.Subscribe<CombatGroggyAppliedEvent>(OnCombatGroggyApplied);
+        EventBus.Instance.Subscribe<CombatActorGuardChangedEvent>(OnCombatActorGuardChanged);
+        EventBus.Instance.Subscribe<CombatActorBrokenEvent>(OnCombatActorBroken);
+        EventBus.Instance.Subscribe<CombatActorKilledEvent>(OnCombatActorKilled);
+        EventBus.Instance.Subscribe<CombatKillBonusGrantedEvent>(OnCombatKillBonusGranted);
+        EventBus.Instance.Subscribe<CombatPressureChangedEvent>(OnCombatPressureChanged);
         EventBus.Instance.Subscribe<CombatMinimumFallAppliedEvent>(OnCombatMinimumFallApplied);
-        EventBus.Instance.Subscribe<CombatBonusTurnGrantedEvent>(OnCombatBonusTurnGranted);
-        EventBus.Instance.Subscribe<CombatTurnEndedEvent>(OnCombatTurnEnded);
         EventBus.Instance.Subscribe<CombatEndedEvent>(OnCombatEnded);
     }
 
@@ -193,16 +204,27 @@ public class GameCsvLogger : MonoBehaviour
         EventBus.Instance.Unsubscribe<HitStopRequestedEvent>(OnHitStopRequested);
         EventBus.Instance.Unsubscribe<SlowMotionRequestedEvent>(OnSlowMotionRequested);
 
-        EventBus.Instance.Unsubscribe<CombatStartedEvent>(OnCombatStarted);
-        EventBus.Instance.Unsubscribe<CombatTurnStartedEvent>(OnCombatTurnStarted);
-        EventBus.Instance.Unsubscribe<CombatActionRequestedEvent>(OnCombatActionRequested);
-        EventBus.Instance.Unsubscribe<CombatActionExecutedEvent>(OnCombatActionExecuted);
+        EventBus.Instance.Unsubscribe<CombatRoundStartedEvent>(OnCombatRoundStarted);
+        EventBus.Instance.Unsubscribe<CombatIntentShownEvent>(OnCombatIntentShown);
+        EventBus.Instance.Unsubscribe<CombatCommandQueuedEvent>(OnCombatCommandQueued);
+        EventBus.Instance.Unsubscribe<CombatCommandConfirmedEvent>(OnCombatCommandConfirmed);
+        EventBus.Instance.Unsubscribe<CombatAllyCommandResolvedEvent>(OnCombatAllyCommandResolved);
+        EventBus.Instance.Unsubscribe<CombatHourglassFlippedEvent>(OnCombatHourglassFlipped);
+        EventBus.Instance.Unsubscribe<CombatEnemyOrderChangedEvent>(OnCombatEnemyOrderChanged);
+        EventBus.Instance.Unsubscribe<CombatEnemyOrderEntryResolvedEvent>(OnCombatEnemyOrderEntryResolved);
+        EventBus.Instance.Unsubscribe<CombatTimelinePreviewChangedEvent>(OnCombatTimelinePreviewChanged);
+        EventBus.Instance.Unsubscribe<CombatTimelineStartedEvent>(OnCombatTimelineStarted);
+        EventBus.Instance.Unsubscribe<CombatTimelineEntryResolvedEvent>(OnCombatTimelineEntryResolved);
+        EventBus.Instance.Unsubscribe<CombatIntentResolvedEvent>(OnCombatIntentResolved);
+        EventBus.Instance.Unsubscribe<CombatIntentFailedEvent>(OnCombatIntentFailed);
+        EventBus.Instance.Unsubscribe<CombatActorSelectedEvent>(OnCombatActorSelected);
         EventBus.Instance.Unsubscribe<CombatActorDamagedEvent>(OnCombatActorDamaged);
-        EventBus.Instance.Unsubscribe<CombatBreakTriggeredEvent>(OnCombatBreakTriggered);
-        EventBus.Instance.Unsubscribe<CombatGroggyAppliedEvent>(OnCombatGroggyApplied);
+        EventBus.Instance.Unsubscribe<CombatActorGuardChangedEvent>(OnCombatActorGuardChanged);
+        EventBus.Instance.Unsubscribe<CombatActorBrokenEvent>(OnCombatActorBroken);
+        EventBus.Instance.Unsubscribe<CombatActorKilledEvent>(OnCombatActorKilled);
+        EventBus.Instance.Unsubscribe<CombatKillBonusGrantedEvent>(OnCombatKillBonusGranted);
+        EventBus.Instance.Unsubscribe<CombatPressureChangedEvent>(OnCombatPressureChanged);
         EventBus.Instance.Unsubscribe<CombatMinimumFallAppliedEvent>(OnCombatMinimumFallApplied);
-        EventBus.Instance.Unsubscribe<CombatBonusTurnGrantedEvent>(OnCombatBonusTurnGranted);
-        EventBus.Instance.Unsubscribe<CombatTurnEndedEvent>(OnCombatTurnEnded);
         EventBus.Instance.Unsubscribe<CombatEndedEvent>(OnCombatEnded);
     }
 
@@ -313,39 +335,58 @@ public class GameCsvLogger : MonoBehaviour
         });
     }
 
-    private void OnCombatStarted(CombatStartedEvent evt) => LogCombatEvent("CombatStartedEvent", evt.Snapshot);
-    private void OnCombatTurnStarted(CombatTurnStartedEvent evt) => LogCombatEvent("CombatTurnStartedEvent", evt.Snapshot);
-    private void OnCombatActionExecuted(CombatActionExecutedEvent evt) => LogCombatEvent("CombatActionExecutedEvent", evt.Snapshot);
-    private void OnCombatActorDamaged(CombatActorDamagedEvent evt) => LogCombatEvent("CombatActorDamagedEvent", evt.Snapshot);
-    private void OnCombatBreakTriggered(CombatBreakTriggeredEvent evt) => LogCombatEvent("CombatBreakTriggeredEvent", evt.Snapshot);
-    private void OnCombatGroggyApplied(CombatGroggyAppliedEvent evt) => LogCombatEvent("CombatGroggyAppliedEvent", evt.Snapshot);
-    private void OnCombatTurnEnded(CombatTurnEndedEvent evt) => LogCombatEvent("CombatTurnEndedEvent", evt.Snapshot);
-
-    private void OnCombatActionRequested(CombatActionRequestedEvent evt)
+    private void OnCombatRoundStarted(CombatRoundStartedEvent evt) => LogCombatEvent("CombatRoundStartedEvent", evt.Snapshot);
+    private void OnCombatIntentShown(CombatIntentShownEvent evt) => LogCombatEvent("CombatIntentShownEvent", evt.Snapshot);
+    private void OnCombatCommandQueued(CombatCommandQueuedEvent evt) => LogCombatEvent("CombatCommandQueuedEvent", evt.Snapshot);
+    private void OnCombatCommandConfirmed(CombatCommandConfirmedEvent evt) => LogCombatEvent("CombatCommandConfirmedEvent", evt.Snapshot);
+    private void OnCombatAllyCommandResolved(CombatAllyCommandResolvedEvent evt)
     {
-        Log(GameLogEventType.CombatEvent, metadata: new Dictionary<string, object>
-        {
-            { "event_name", "CombatActionRequestedEvent" },
-            { "action_type", evt.ActionType.ToString() }
-        });
+        Dictionary<string, object> metadata = BuildSnapshotMetadata(evt.Snapshot, "AllyCommandResolved");
+        metadata["action_type"] = evt.Command.ActionType.ToString();
+        metadata["source_actor_id"] = evt.Command.SourceActorId;
+        metadata["target_actor_id"] = evt.Command.TargetActorId;
+        metadata["succeeded"] = evt.Succeeded;
+        metadata["message"] = evt.Message ?? string.Empty;
+        Log(GameLogEventType.CombatEvent, metadata: metadata);
     }
+    private void OnCombatHourglassFlipped(CombatHourglassFlippedEvent evt) => LogCombatEvent("CombatHourglassFlippedEvent", evt.Snapshot);
+    private void OnCombatEnemyOrderChanged(CombatEnemyOrderChangedEvent evt) => LogCombatEvent("EnemyOrderChanged", evt.Snapshot);
+    private void OnCombatEnemyOrderEntryResolved(CombatEnemyOrderEntryResolvedEvent evt)
+    {
+        string eventName = evt.Message;
+        if (string.IsNullOrWhiteSpace(eventName))
+        {
+            eventName = "EnemyOrderEntryResolved";
+        }
+
+        Dictionary<string, object> metadata = BuildSnapshotMetadata(evt.Snapshot, eventName);
+        metadata["entry_label"] = evt.Entry.label ?? string.Empty;
+        metadata["entry_index"] = evt.Entry.timeline_index;
+        Log(GameLogEventType.CombatEvent, metadata: metadata);
+    }
+    private void OnCombatTimelinePreviewChanged(CombatTimelinePreviewChangedEvent evt) => LogCombatEvent("CombatTimelinePreviewChangedEvent", evt.Snapshot);
+    private void OnCombatTimelineStarted(CombatTimelineStartedEvent evt) => LogCombatEvent("EnemyTurnStarted", evt.Snapshot);
+    private void OnCombatTimelineEntryResolved(CombatTimelineEntryResolvedEvent evt) => LogCombatEvent("EnemyOrderEntryResolved", evt.Snapshot);
+    private void OnCombatIntentResolved(CombatIntentResolvedEvent evt) => LogCombatEvent("EnemyIntentResolved", evt.Snapshot);
+    private void OnCombatIntentFailed(CombatIntentFailedEvent evt) => LogCombatEvent("EnemyIntentFailed", evt.Snapshot);
+    private void OnCombatActorSelected(CombatActorSelectedEvent evt) => LogCombatEvent("CombatActorSelectedEvent", evt.Snapshot);
+    private void OnCombatActorDamaged(CombatActorDamagedEvent evt) => LogCombatEvent("CombatActorDamagedEvent", evt.Snapshot);
+    private void OnCombatActorGuardChanged(CombatActorGuardChangedEvent evt) => LogCombatEvent("CombatActorGuardChangedEvent", evt.Snapshot);
+    private void OnCombatActorBroken(CombatActorBrokenEvent evt) => LogCombatEvent("CombatActorBrokenEvent", evt.Snapshot);
+    private void OnCombatActorKilled(CombatActorKilledEvent evt) => LogCombatEvent("CombatActorKilledEvent", evt.Snapshot);
+    private void OnCombatKillBonusGranted(CombatKillBonusGrantedEvent evt) => LogCombatEvent("CombatKillBonusGrantedEvent", evt.Snapshot);
+    private void OnCombatPressureChanged(CombatPressureChangedEvent evt) => LogCombatEvent("CombatPressureChangedEvent", evt.Snapshot);
 
     private void OnCombatMinimumFallApplied(CombatMinimumFallAppliedEvent evt)
     {
         Log(GameLogEventType.CombatEvent, metadata: new Dictionary<string, object>
         {
             { "event_name", "CombatMinimumFallAppliedEvent" },
-            { "actor", evt.Actor.ToString() },
             { "forced_amount", evt.ForcedAmount },
-            { "minimum_fall", evt.MinimumFall }
+            { "minimum_fall", evt.MinimumFall },
+            { "upper_after", evt.UpperAfter },
+            { "lower_after", evt.LowerAfter }
         });
-    }
-
-    private void OnCombatBonusTurnGranted(CombatBonusTurnGrantedEvent evt)
-    {
-        Dictionary<string, object> metadata = BuildSnapshotMetadata(evt.Snapshot, "CombatBonusTurnGrantedEvent");
-        metadata["bonus_actor"] = evt.Actor.ToString();
-        Log(GameLogEventType.CombatEvent, metadata: metadata);
     }
 
     private void OnCombatEnded(CombatEndedEvent evt)
@@ -371,27 +412,131 @@ public class GameCsvLogger : MonoBehaviour
 
     private static Dictionary<string, object> BuildSnapshotMetadata(CombatLogSnapshot snapshot, string eventName)
     {
+        string allies = SerializeActorSnapshots(snapshot.allies);
+        string enemies = SerializeActorSnapshots(snapshot.enemies);
+        string intents = SerializeIntentSnapshots(snapshot.intents);
+        string timeline = SerializeTimelineSnapshots(snapshot.timeline);
+
         return new Dictionary<string, object>
         {
             { "event_name", eventName },
-            { "turn_index", snapshot.turn_index },
+            { "round_index", snapshot.round_index },
             { "turn_state", snapshot.turn_state.ToString() },
-            { "actor", snapshot.actor.ToString() },
-            { "action_type", snapshot.action_type.ToString() },
-            { "spent_sand", snapshot.spent_sand },
-            { "damage", snapshot.damage },
-            { "player_hp", snapshot.player_hp },
-            { "enemy_hp", snapshot.enemy_hp },
-            { "player_available_sand", snapshot.player_available_sand },
-            { "enemy_available_sand", snapshot.enemy_available_sand },
-            { "player_transferred_sand", snapshot.player_transferred_sand },
-            { "enemy_transferred_sand", snapshot.enemy_transferred_sand },
-            { "player_guard_value", snapshot.player_guard_value },
-            { "enemy_threat", snapshot.enemy_threat },
-            { "enemy_guard_value", snapshot.enemy_guard_value },
-            { "enemy_groggy_pending", snapshot.enemy_groggy_pending },
-            { "enemy_groggy_active", snapshot.enemy_groggy_active }
+            { "upper_sand", snapshot.upper_sand },
+            { "lower_sand", snapshot.lower_sand },
+            { "player_spend", snapshot.player_spend },
+            { "enemy_sand", snapshot.enemy_sand },
+            { "minimum_fall", snapshot.minimum_fall },
+            { "pressure", snapshot.pressure },
+            { "kill_bonus_token", snapshot.kill_bonus_token },
+            { "selected_ally_slot", snapshot.selected_ally_slot },
+            { "selected_enemy_slot", snapshot.selected_enemy_slot },
+            { "allies", allies },
+            { "enemies", enemies },
+            { "intents", intents },
+            { "timeline", timeline }
         };
+    }
+
+    private static string SerializeActorSnapshots(CombatActorSnapshot[] snapshots)
+    {
+        if (snapshots == null || snapshots.Length == 0)
+        {
+            return string.Empty;
+        }
+
+        StringBuilder builder = new StringBuilder();
+        for (int i = 0; i < snapshots.Length; i++)
+        {
+            CombatActorSnapshot actor = snapshots[i];
+            if (i > 0)
+            {
+                builder.Append('|');
+            }
+
+            builder.Append(actor.slot_index);
+            builder.Append(':');
+            builder.Append(actor.actor_name);
+            builder.Append('(');
+            builder.Append(actor.hp);
+            builder.Append('/');
+            builder.Append(actor.max_hp);
+            builder.Append(',');
+            builder.Append(actor.guard);
+            builder.Append('/');
+            builder.Append(actor.max_guard);
+            builder.Append(",dead=");
+            builder.Append(actor.is_dead ? 1 : 0);
+            builder.Append(')');
+        }
+
+        return builder.ToString();
+    }
+
+    private static string SerializeIntentSnapshots(CombatIntentSnapshot[] snapshots)
+    {
+        if (snapshots == null || snapshots.Length == 0)
+        {
+            return string.Empty;
+        }
+
+        StringBuilder builder = new StringBuilder();
+        for (int i = 0; i < snapshots.Length; i++)
+        {
+            CombatIntentSnapshot intent = snapshots[i];
+            if (i > 0)
+            {
+                builder.Append('|');
+            }
+
+            builder.Append(intent.source_slot_index);
+            builder.Append(':');
+            builder.Append(intent.action_type);
+            builder.Append("(c");
+            builder.Append(intent.effective_cost);
+            builder.Append('/');
+            builder.Append(intent.base_cost);
+            builder.Append(",s");
+            builder.Append(intent.speed);
+            builder.Append(",fb=");
+            builder.Append(intent.fallback_action_type);
+            builder.Append(')');
+        }
+
+        return builder.ToString();
+    }
+
+    private static string SerializeTimelineSnapshots(CombatTimelineEntrySnapshot[] snapshots)
+    {
+        if (snapshots == null || snapshots.Length == 0)
+        {
+            return string.Empty;
+        }
+
+        StringBuilder builder = new StringBuilder();
+        for (int i = 0; i < snapshots.Length; i++)
+        {
+            CombatTimelineEntrySnapshot entry = snapshots[i];
+            if (i > 0)
+            {
+                builder.Append('>');
+            }
+
+            builder.Append(entry.timeline_index);
+            builder.Append(':');
+            builder.Append(entry.side);
+            builder.Append(':');
+            builder.Append(entry.action_type);
+            builder.Append("(s");
+            builder.Append(entry.speed);
+            builder.Append(",c");
+            builder.Append(entry.cost);
+            builder.Append(',');
+            builder.Append(entry.status);
+            builder.Append(')');
+        }
+
+        return builder.ToString();
     }
 
     public void LogCustom(string message, Dictionary<string, object> metadata = null, GameObject actor = null, GameObject target = null)

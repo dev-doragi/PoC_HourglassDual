@@ -91,7 +91,13 @@ public class CombatWaveController : MonoBehaviour
 
         if (carryPlayerHpBetweenWaves)
         {
-            _carriedPlayerHp = Mathf.Max(0, evt.Snapshot.player_hp);
+            int carriedHp = 0;
+            if (evt.Snapshot.allies != null && evt.Snapshot.allies.Length > 0)
+            {
+                carriedHp = evt.Snapshot.allies[0].hp;
+            }
+
+            _carriedPlayerHp = Mathf.Max(0, carriedHp);
         }
 
         if (_nextWaveRoutine != null)

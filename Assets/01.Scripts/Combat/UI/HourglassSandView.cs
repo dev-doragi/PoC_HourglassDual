@@ -5,12 +5,11 @@ using UnityEngine;
 using UnityEngine.UI;
 
 /// <summary>
-/// Binds pre-placed hourglass sliders and texts to runtime combat sand state and turn flips.
+/// Displays shared hourglass state for 3v3 combat.
 /// </summary>
 public class HourglassSandView : MonoBehaviour
 {
     [SerializeField] private RectTransform _rotatingVisualRoot;
-    [SerializeField] private CanvasGroup _hourglassTextCanvasGroup;
     [SerializeField] private Slider _upperSlider;
     [SerializeField] private Slider _downerSlider;
     [SerializeField] private TMP_Text _upperText;
@@ -19,36 +18,14 @@ public class HourglassSandView : MonoBehaviour
     [SerializeField] private TMP_Text _nextSandText;
     [SerializeField] private float _flipDuration = 0.45f;
     [SerializeField] private float _flipAnglePerTurn = -180f;
-    [SerializeField] private float _textFadeDuration = 0.08f;
-    [Header("Sand Tween")]
-    [SerializeField] private float _sandTweenDuration = 0.16f;
-    [SerializeField] private Ease _sandTweenEase = Ease.Linear;
 
     private bool _isFlipped;
-    private Coroutine _flipRoutine;
-    private Slider.Direction _upperBaseDirection;
-    private Slider.Direction _downerBaseDirection;
     private bool _isFlipTransitionRunning;
-    private bool _hasPendingFlipPreview;
-    private bool _forceFlipPending;
-    private CombatTurnState _previewTurnState;
-    private CombatRuntimeState _queuedStateDuringFlip;
-    private bool _freezeSandUntilStateProgress;
-    private CombatTurnState _freezeTurnState;
-    private int _freezeAvailable;
-    private int _freezeTransferred;
-    public bool IsTransitioning => _isFlipTransitionRunning;
+    private Coroutine _flipRoutine;
+    private bool _flipQueued;
+    private CombatRuntimeState _queuedState;
 
-    private void Awake()
-    {
-        _upperBaseDirection = _upperSlider != null ? _upperSlider.direction : Slider.Direction.BottomToTop;
-        _downerBaseDirection = _downerSlider != null ? _downerSlider.direction : Slider.Direction.BottomToTop;
-        ApplySliderDirection();
-        if (_hourglassTextCanvasGroup != null)
-        {
-            _hourglassTextCanvasGroup.alpha = 1f;
-        }
-    }
+    public bool IsTransitioning => _isFlipTransitionRunning;
 
     private void OnDestroy()
     {
@@ -64,15 +41,7 @@ public class HourglassSandView : MonoBehaviour
             return;
         }
 
-        if (_isFlipTransitionRunning)
-        {
-            _queuedStateDuringFlip = state;
-            return;
-        }
-
-        bool shouldFlipByTurnSwap = IsCombatTurn(_previewTurnState) && IsCombatTurn(state.TurnState) && _previewTurnState != state.TurnState;
-        bool shouldFlipByForce = _forceFlipPending && IsCombatTurn(state.TurnState);
-        if (_hasPendingFlipPreview && (shouldFlipByTurnSwap || shouldFlipByForce))
+        if (_flipQueued && !_isFlipTransitionRunning)
         {
             if (_flipRoutine != null)
             {
@@ -81,25 +50,6 @@ public class HourglassSandView : MonoBehaviour
 
             _flipRoutine = StartCoroutine(FlipRoutine(state));
             return;
-        }
-
-        if (_freezeSandUntilStateProgress)
-        {
-            if (state.TurnState != _freezeTurnState)
-            {
-                _freezeSandUntilStateProgress = false;
-            }
-            else
-            {
-                CombatActorRuntime frozenActor = state.GetActor(state.TurnState);
-                if (frozenActor != null && frozenActor.AvailableSand == _freezeAvailable && frozenActor.TransferredSand == _freezeTransferred)
-                {
-                    ApplyTextState(state, frozenActor.TransferredSand);
-                    return;
-                }
-
-                _freezeSandUntilStateProgress = false;
-            }
         }
 
         ApplyState(state);
@@ -112,108 +62,21 @@ public class HourglassSandView : MonoBehaviour
 
     public void QueueFlipPreview(in CombatLogSnapshot snapshot, CombatRuntimeState state)
     {
-        if (!IsCombatTurn(snapshot.turn_state) || state == null)
-        {
-            return;
-        }
-
-        _hasPendingFlipPreview = true;
-        _forceFlipPending = false;
-        _previewTurnState = snapshot.turn_state;
-        _queuedStateDuringFlip = null;
-
-        int transferred = snapshot.turn_state == CombatTurnState.PlayerTurn
-            ? snapshot.player_transferred_sand
-            : snapshot.enemy_transferred_sand;
-        int available = snapshot.turn_state == CombatTurnState.PlayerTurn
-            ? snapshot.player_available_sand
-            : snapshot.enemy_available_sand;
-        bool nextIsEnemy = snapshot.turn_state == CombatTurnState.PlayerTurn;
-        if (nextIsEnemy && snapshot.enemy_groggy_pending)
-        {
-            nextIsEnemy = false;
-        }
-
-        int safeMax = Mathf.Max(1, state.TotalSand - state.LockedSand);
-        int previewValue = ComputeNextUpperAfterMinimumFall(available, transferred, state.MinimumFall);
-
-        ApplySandState(available, transferred, safeMax, true);
-
-        if (_upperText != null)
-        {
-            _upperText.text = available.ToString();
-        }
-
-        if (_downerText != null)
-        {
-            _downerText.text = transferred.ToString();
-        }
-
-        SetNextText(nextIsEnemy, previewValue, previewValue, false);
+        _flipQueued = true;
+        _queuedState = state;
     }
 
     public void SetResultText(bool playerWon)
     {
-        if (_turnText == null)
+        if (_turnText != null)
         {
-            return;
+            _turnText.text = playerWon ? "VICTORY" : "DEFEAT";
         }
-
-        _turnText.text = playerWon ? "승리!" : "패배!";
     }
 
-    private void ApplyState(CombatRuntimeState state)
-    {
-        if (state == null)
-        {
-            return;
-        }
-
-        if (state.IsCombatEnded)
-        {
-            if (state.Player != null && state.Player.CurrentHp <= 0)
-            {
-                SetResultText(false);
-            }
-            else
-            {
-                SetResultText(true);
-            }
-        }
-
-        CombatActorRuntime currentActor = state.GetActor(state.TurnState);
-        if (currentActor == null)
-        {
-            if (!state.IsCombatEnded)
-            {
-                SetTurnText(state.TurnState);
-            }
-            return;
-        }
-
-        int maxActionSand = Mathf.Max(1, currentActor.MaxActionSand);
-        int available = Mathf.Clamp(currentActor.AvailableSand, 0, maxActionSand);
-        int transferred = Mathf.Clamp(currentActor.TransferredSand, 0, maxActionSand);
-
-        ApplySandState(available, transferred, maxActionSand, false);
-        ApplyTextState(state, transferred);
-    }
-
-    public void PlayFlipAnimation()
-    {
-        if (_flipRoutine != null)
-        {
-            StopCoroutine(_flipRoutine);
-        }
-
-        _flipRoutine = StartCoroutine(FlipRoutine(null));
-    }
-
-    private IEnumerator FlipRoutine(CombatRuntimeState nextState)
+    private IEnumerator FlipRoutine(CombatRuntimeState state)
     {
         _isFlipTransitionRunning = true;
-
-        yield return FadeStaticTexts(0f);
 
         if (_rotatingVisualRoot != null)
         {
@@ -224,243 +87,84 @@ public class HourglassSandView : MonoBehaviour
         }
 
         _isFlipped = !_isFlipped;
-        ApplySliderDirection();
-
-        CombatRuntimeState stateToApply = _queuedStateDuringFlip != null ? _queuedStateDuringFlip : nextState;
-        _queuedStateDuringFlip = null;
-        _hasPendingFlipPreview = false;
-        _forceFlipPending = false;
-        if (stateToApply != null)
-        {
-            CombatActorRuntime actor = stateToApply.GetActor(stateToApply.TurnState);
-            if (actor != null)
-            {
-                _freezeSandUntilStateProgress = true;
-                _freezeTurnState = stateToApply.TurnState;
-                _freezeAvailable = actor.AvailableSand;
-                _freezeTransferred = actor.TransferredSand;
-                ApplyTextState(stateToApply, Mathf.Clamp(actor.TransferredSand, 0, Mathf.Max(1, actor.MaxActionSand)));
-            }
-            else
-            {
-                _freezeSandUntilStateProgress = false;
-                ApplyTextState(stateToApply, 0);
-            }
-        }
-
-        yield return FadeStaticTexts(1f);
-
+        _flipQueued = false;
         _isFlipTransitionRunning = false;
-        _flipRoutine = null;
+
+        ApplyState(_queuedState != null ? _queuedState : state);
+        _queuedState = null;
     }
 
-    private void SetTurnText(CombatTurnState turnState)
+    private void ApplyState(CombatRuntimeState state)
     {
-        if (_turnText == null)
+        if (state == null)
         {
             return;
         }
 
-        if (turnState == CombatTurnState.PlayerTurn)
-        {
-            _turnText.text = "PLAYER TURN";
-        }
-        else if (turnState == CombatTurnState.EnemyTurn)
-        {
-            _turnText.text = "ENEMY TURN";
-        }
-        else
-        {
-            _turnText.text = "-";
-        }
-    }
+        int unlockedSand = Mathf.Max(1, state.TotalSand - state.LockedSand);
 
-    private void SetNextSandText(CombatRuntimeState state, int currentTransferred)
-    {
-        if (state.TurnState != CombatTurnState.PlayerTurn && state.TurnState != CombatTurnState.EnemyTurn)
-        {
-            if (_nextSandText != null)
-            {
-                _nextSandText.text = "다음 -";
-            }
-            return;
-        }
-
-        CombatActorRuntime actor = state.GetActor(state.TurnState);
-        int currentAvailable = actor != null ? actor.AvailableSand : 0;
-        int previewBase = ComputeNextUpperAfterMinimumFall(currentAvailable, currentTransferred, state.MinimumFall);
-        bool nextIsEnemy = state.TurnState == CombatTurnState.PlayerTurn;
-        bool bonusTurn = nextIsEnemy && state.Enemy != null && (state.Enemy.GroggyPending || state.Enemy.GroggyActive);
-        if (bonusTurn)
-        {
-            nextIsEnemy = false;
-        }
-
-        SetNextText(nextIsEnemy, previewBase, previewBase, false);
-    }
-
-    private void SetNextText(bool nextIsEnemy, int previewBase, int previewReduced, bool groggyReduced)
-    {
-        if (_nextSandText == null)
-        {
-            return;
-        }
-
-        if (groggyReduced)
-        {
-            _nextSandText.text = $"그로기 {previewBase} -> {previewReduced}";
-            return;
-        }
-
-        string nextActor = nextIsEnemy ? "적" : "플레이어";
-        _nextSandText.text = $"다음 {nextActor} {previewReduced}";
-    }
-
-    private void ApplySliderDirection()
-    {
         if (_upperSlider != null)
         {
-            _upperSlider.direction = _isFlipped ? ToggleDirection(_upperBaseDirection) : _upperBaseDirection;
+            _upperSlider.minValue = 0f;
+            _upperSlider.maxValue = unlockedSand;
+            _upperSlider.value = Mathf.Clamp(state.UpperSand, 0, unlockedSand);
+            _upperSlider.interactable = false;
         }
 
         if (_downerSlider != null)
         {
-            _downerSlider.direction = _isFlipped ? ToggleDirection(_downerBaseDirection) : _downerBaseDirection;
-        }
-    }
-
-    private static Slider.Direction ToggleDirection(Slider.Direction source)
-    {
-        switch (source)
-        {
-            case Slider.Direction.BottomToTop:
-                return Slider.Direction.TopToBottom;
-            case Slider.Direction.TopToBottom:
-                return Slider.Direction.BottomToTop;
-            case Slider.Direction.LeftToRight:
-                return Slider.Direction.RightToLeft;
-            case Slider.Direction.RightToLeft:
-                return Slider.Direction.LeftToRight;
-            default:
-                return source;
-        }
-    }
-
-    private static bool IsCombatTurn(CombatTurnState turnState)
-    {
-        return turnState == CombatTurnState.PlayerTurn || turnState == CombatTurnState.EnemyTurn;
-    }
-
-    private static int ComputeNextUpperAfterMinimumFall(int availableSand, int transferredSand, int minimumFall)
-    {
-        int upper = Mathf.Max(0, availableSand);
-        int lower = Mathf.Max(0, transferredSand);
-        int safeMinimum = Mathf.Max(0, minimumFall);
-        if (safeMinimum <= 0 || lower >= safeMinimum)
-        {
-            return lower;
+            _downerSlider.minValue = 0f;
+            _downerSlider.maxValue = unlockedSand;
+            _downerSlider.value = Mathf.Clamp(state.LowerSand, 0, unlockedSand);
+            _downerSlider.interactable = false;
         }
 
-        int forcedFall = Mathf.Min(safeMinimum - lower, upper);
-        return lower + forcedFall;
-    }
-
-    private void ApplySandState(int available, int transferred, int maxActionSand, bool immediate)
-    {
-        Slider topVisibleSlider = GetTopVisibleSlider();
-        Slider bottomVisibleSlider = GetBottomVisibleSlider();
-
-        if (topVisibleSlider != null)
-        {
-            topVisibleSlider.minValue = 0f;
-            topVisibleSlider.maxValue = maxActionSand;
-            topVisibleSlider.interactable = false;
-            TweenSliderValue(topVisibleSlider, available, immediate);
-        }
-
-        if (bottomVisibleSlider != null)
-        {
-            bottomVisibleSlider.minValue = 0f;
-            bottomVisibleSlider.maxValue = maxActionSand;
-            bottomVisibleSlider.interactable = false;
-            TweenSliderValue(bottomVisibleSlider, transferred, immediate);
-        }
-    }
-
-    private void TweenSliderValue(Slider slider, int targetValue, bool immediate)
-    {
-        if (slider == null)
-        {
-            return;
-        }
-
-        float clampedTarget = Mathf.Clamp(targetValue, slider.minValue, slider.maxValue);
-        slider.DOKill();
-
-        float duration = immediate ? 0f : Mathf.Max(0f, _sandTweenDuration);
-        if (duration <= 0f || Mathf.Approximately(slider.value, clampedTarget))
-        {
-            slider.value = clampedTarget;
-            return;
-        }
-
-        slider.DOValue(clampedTarget, duration).SetEase(_sandTweenEase);
-    }
-
-    private Slider GetTopVisibleSlider()
-    {
-        return _isFlipped ? _downerSlider : _upperSlider;
-    }
-
-    private Slider GetBottomVisibleSlider()
-    {
-        return _isFlipped ? _upperSlider : _downerSlider;
-    }
-
-    private void ApplyTextState(CombatRuntimeState state, int transferred)
-    {
-        CombatActorRuntime actor = state != null ? state.GetActor(state.TurnState) : null;
         if (_upperText != null)
         {
-            _upperText.text = actor != null ? Mathf.Clamp(actor.AvailableSand, 0, Mathf.Max(1, actor.MaxActionSand)).ToString() : "0";
+            _upperText.text = state.UpperSand.ToString();
         }
 
         if (_downerText != null)
         {
-            _downerText.text = Mathf.Max(0, transferred).ToString();
+            _downerText.text = state.LowerSand.ToString();
         }
 
-        if (state != null)
+        if (_turnText != null)
         {
-            SetTurnText(state.TurnState);
-            SetNextSandText(state, transferred);
+            if (state.TurnState == CombatTurnState.RoundStart)
+            {
+                _turnText.text = $"ROUND {state.TurnIndex} / Start";
+            }
+            else if (state.TurnState == CombatTurnState.PlayerCommand)
+            {
+                _turnText.text = $"ROUND {state.TurnIndex} / Command";
+            }
+            else if (state.TurnState == CombatTurnState.PlayerResolving)
+            {
+                _turnText.text = $"ROUND {state.TurnIndex} / Allies";
+            }
+            else if (state.TurnState == CombatTurnState.Flipping)
+            {
+                _turnText.text = $"ROUND {state.TurnIndex} / Flip";
+            }
+            else if (state.TurnState == CombatTurnState.EnemyResolving)
+            {
+                _turnText.text = $"ROUND {state.TurnIndex} / Enemies";
+            }
+            else if (state.TurnState == CombatTurnState.Ended)
+            {
+                _turnText.text = $"ROUND {state.TurnIndex} / Ended";
+            }
+            else
+            {
+                _turnText.text = "-";
+            }
         }
-    }
 
-    private IEnumerator FadeStaticTexts(float targetAlpha)
-    {
-        float duration = Mathf.Clamp(_textFadeDuration, 0.01f, 0.2f);
-
-        if (_hourglassTextCanvasGroup != null)
+        if (_nextSandText != null)
         {
-            _hourglassTextCanvasGroup.DOKill();
-            _hourglassTextCanvasGroup.DOFade(targetAlpha, duration).SetEase(Ease.OutQuad);
+            int predictedEnemySand = Mathf.Max(state.MinimumFall, state.LowerSand + state.PlayerSpend);
+            _nextSandText.text = $"MinFall:{state.MinimumFall}  PredEnemySand:{predictedEnemySand}  Pressure:{state.Pressure}";
         }
-
-        FadeLabel(_turnText, targetAlpha, duration);
-        FadeLabel(_nextSandText, targetAlpha, duration);
-
-        yield return new WaitForSeconds(duration);
-    }
-
-    private static void FadeLabel(TMP_Text text, float targetAlpha, float duration)
-    {
-        if (text == null)
-        {
-            return;
-        }
-
-        text.DOKill();
-        text.DOFade(targetAlpha, duration).SetEase(Ease.OutQuad);
     }
 }

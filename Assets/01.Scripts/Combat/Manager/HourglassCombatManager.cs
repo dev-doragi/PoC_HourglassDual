@@ -1,92 +1,28 @@
-using System.Collections;
+using System;
 using System.Collections.Generic;
 using UnityEngine;
 
-/// <summary>
-/// Handles hourglass combat turn flow.
-/// Owns combat state, receives player action requests, runs enemy turns,
-/// and publishes combat events.
-/// </summary>
 [DefaultExecutionOrder(-70)]
 public class HourglassCombatManager : Singleton<HourglassCombatManager>
 {
-    private enum EnemyIntentType
-    {
-        None = 0,
-        RecoverGuard = 1,
-        WeakAttack = 2,
-        HeavyAttack = 3,
-        HeavyAttackPlus = 4,
-        DesperationStrike = 5,
-        DoubleAction = 6
-    }
-
     [SerializeField] private HourglassCombatConfigSO _config;
-    [SerializeField] private CombatActorDataSO _playerData;
-    [SerializeField] private CombatActorDataSO _enemyData;
-    [SerializeField] private CombatActionDataSO[] _actionDatas;
+    [SerializeField] private CombatActionDataSO[] _globalActionCatalog;
     [SerializeField] private float _flipDuration = 0.45f;
-    [SerializeField] private float _enemyTurnStartDelay = 0.4f;
-    [SerializeField] private float _enemyActionDelay = 0.7f;
-    [SerializeField] private float _enemyTurnEndDelay = 0.35f;
-    [SerializeField] private float _minimumFallTransitionDelay = 0.2f;
 
     private readonly CombatActionResolver _actionResolver = new CombatActionResolver();
     private readonly CombatTurnProcessor _turnProcessor = new CombatTurnProcessor();
-    private readonly Dictionary<CombatActionType, CombatActionDataSO> _actionDataByType = new Dictionary<CombatActionType, CombatActionDataSO>();
-    private Coroutine _enemyTurnRoutine;
-    private Coroutine _turnTransitionRoutine;
+    private readonly Dictionary<CombatActionType, CombatActionDataSO> _actionByType = new Dictionary<CombatActionType, CombatActionDataSO>();
     private int? _nextCombatPlayerStartHpOverride;
-    private bool _isTurnTransitioning;
 
     public CombatRuntimeState RuntimeState { get; private set; }
     public float FlipDuration => Mathf.Max(0f, _flipDuration);
-    public CombatActorDataSO PlayerData => _playerData;
-    public CombatActorDataSO EnemyData => _enemyData;
+
+    public CombatActorDataSO PlayerData => RuntimeState != null && RuntimeState.Allies.Count > 0 ? ToActorData(RuntimeState.Allies[0].ActorId, CombatActorType.Ally) : null;
+    public CombatActorDataSO EnemyData => RuntimeState != null && RuntimeState.Enemies.Count > 0 ? ToActorData(RuntimeState.Enemies[0].ActorId, CombatActorType.Enemy) : null;
 
     protected override void OnBootstrap()
     {
         InitializeRuntime();
-    }
-
-    public void StartCombat()
-    {
-        InitializeRuntime();
-        if (RuntimeState == null)
-        {
-            return;
-        }
-
-        ApplyNextCombatPlayerHpOverrideIfNeeded();
-        RuntimeState.TurnIndex = 0;
-        RuntimeState.TurnState = CombatTurnState.PlayerTurn;
-        RuntimeState.IsCombatEnded = false;
-        RuntimeState.SyncActorSand();
-
-        EventBus.Instance.Publish(new CombatStartedEvent(CreateSnapshot()));
-        EventBus.Instance.Publish(new CombatTurnStartedEvent(CreateSnapshot()));
-        Debug.Log("[Combat] Combat Started");
-        Debug.Log($"[Combat] Turn Started: {RuntimeState.TurnState}");
-        PublishStateDebugLog();
-    }
-
-    public void RequestStrike() => RequestPlayerAction(CombatActionType.Strike);
-    public void RequestPierce() => RequestPlayerAction(CombatActionType.Pierce);
-    public void RequestHex() => RequestPlayerAction(CombatActionType.Hex);
-    public void RequestGuard() => RequestPlayerAction(CombatActionType.Guard);
-    public void RequestEndTurn() => RequestPlayerAction(CombatActionType.EndTurn);
-
-    public void ConfigureCombatActors(CombatActorDataSO playerData, CombatActorDataSO enemyData)
-    {
-        if (playerData != null)
-        {
-            _playerData = playerData;
-        }
-
-        if (enemyData != null)
-        {
-            _enemyData = enemyData;
-        }
     }
 
     public void SetNextCombatPlayerStartHpOverride(int playerHp)
@@ -94,64 +30,175 @@ public class HourglassCombatManager : Singleton<HourglassCombatManager>
         _nextCombatPlayerStartHpOverride = Mathf.Max(0, playerHp);
     }
 
-    private void RequestPlayerAction(CombatActionType actionType)
+    public void ConfigureCombatActors(CombatActorDataSO playerData, CombatActorDataSO enemyData)
     {
+        if (_config == null)
+        {
+            Debug.LogError("[Combat] Cannot configure actors because config is null.");
+            return;
+        }
+
+        if (_config.allyPartyActors == null || _config.allyPartyActors.Length < 3)
+        {
+            _config.allyPartyActors = new CombatActorDataSO[3];
+        }
+
+        if (_config.enemyPartyActors == null || _config.enemyPartyActors.Length < 3)
+        {
+            _config.enemyPartyActors = new CombatActorDataSO[3];
+        }
+
+        if (playerData != null)
+        {
+            _config.allyPartyActors[0] = playerData;
+        }
+
+        if (enemyData != null)
+        {
+            _config.enemyPartyActors[0] = enemyData;
+        }
+    }
+
+    public void StartCombat()
+    {
+        if (!InitializeRuntime())
+        {
+            return;
+        }
+
+        ApplyNextCombatPlayerHpOverrideIfNeeded();
+        BeginRound(1);
+    }
+
+    public void RequestStrike() => RequestActionAtQuickSlot(0);
+    public void RequestPierce() => RequestActionAtQuickSlot(1);
+    public void RequestHex() => RequestActionAtQuickSlot(2);
+
+    public void RequestGuard()
+    {
+        if (!CanAcceptPlayerInput())
+        {
+            return;
+        }
+
+        SelectEnemyBySlot(FindNextAliveEnemySlot(RuntimeState.SelectedEnemySlot));
+    }
+
+    public void RequestEndTurn()
+    {
+        if (!CanAcceptPlayerInput())
+        {
+            return;
+        }
+
+        ConfirmAndRunRound();
+    }
+
+    public bool SelectAllyBySlot(int slotIndex)
+    {
+        if (RuntimeState == null || RuntimeState.Allies.Count == 0)
+        {
+            return false;
+        }
+
+        RuntimeState.SelectedAllySlot = Mathf.Clamp(slotIndex, 0, RuntimeState.Allies.Count - 1);
+        PublishActorSelected(CombatActorType.Ally, RuntimeState.SelectedAllySlot);
+        return true;
+    }
+
+    public bool SelectEnemyBySlot(int slotIndex)
+    {
+        if (RuntimeState == null || RuntimeState.Enemies.Count == 0)
+        {
+            return false;
+        }
+
+        RuntimeState.SelectedEnemySlot = Mathf.Clamp(slotIndex, 0, RuntimeState.Enemies.Count - 1);
+        PublishActorSelected(CombatActorType.Enemy, RuntimeState.SelectedEnemySlot);
+        return true;
+    }
+
+    public CombatActionDataSO[] GetSelectedAllyActions()
+    {
+        CombatActorRuntime ally = RuntimeState != null ? RuntimeState.GetSelectedAlly() : null;
+        if (ally == null || ally.ActionList.Count == 0)
+        {
+            return Array.Empty<CombatActionDataSO>();
+        }
+
+        return ally.ActionList.ToArray();
+    }
+
+    public bool CanQueueActionForSelectedAlly(CombatActionDataSO actionData, out string reason)
+    {
+        reason = null;
         if (RuntimeState == null)
         {
-            Debug.LogWarning($"[Combat] Action Failed: {actionType} | Reason: RuntimeState is not initialized.");
-            return;
+            reason = "NoRuntime";
+            return false;
         }
 
-        if (RuntimeState.IsCombatEnded)
+        if (!CanAcceptPlayerInput())
         {
-            Debug.LogWarning($"[Combat] Action Failed: {actionType} | Reason: CombatEnded state");
-            return;
+            reason = "NotPlayerCommand";
+            return false;
         }
 
-        if (_isTurnTransitioning)
+        CombatActorRuntime source = RuntimeState.GetSelectedAlly();
+        if (source == null || source.IsDead)
         {
-            Debug.LogWarning($"[Combat] Action Failed: {actionType} | Reason: TurnTransitioning");
-            return;
+            reason = "NoAliveSource";
+            return false;
         }
 
-        if (RuntimeState.TurnState != CombatTurnState.PlayerTurn)
+        if (actionData == null)
         {
-            Debug.LogWarning($"[Combat] Action Failed: {actionType} | Reason: current turn is not PlayerTurn");
-            return;
+            reason = "ActionNull";
+            return false;
         }
 
-        TryExecutePlayerAction(actionType);
+        int existingForActor = CountQueuedCommandsForActor(source.ActorId);
+        int simulatedSpend = RuntimeState.PlayerSpend;
+        if (existingForActor > 0)
+        {
+            simulatedSpend -= GetFirstQueuedCostForActor(source.ActorId);
+        }
+
+        int remainingUpper = Mathf.Max(0, RuntimeState.UpperSand - simulatedSpend);
+        if (remainingUpper < Mathf.Max(0, actionData.baseCost))
+        {
+            reason = "NotEnoughUpperSand";
+            return false;
+        }
+
+        if (RequiresEnemyTarget(actionData))
+        {
+            CombatActorRuntime enemy = RuntimeState.GetSelectedEnemy();
+            if (enemy == null || enemy.IsDead)
+            {
+                reason = "TargetRequired";
+                return false;
+            }
+        }
+
+        return true;
     }
 
-    private void ApplyNextCombatPlayerHpOverrideIfNeeded()
+    private bool InitializeRuntime()
     {
-        if (!_nextCombatPlayerStartHpOverride.HasValue)
+        RuntimeState = null;
+        if (!ValidateConfig())
         {
-            return;
+            return false;
         }
 
-        if (RuntimeState == null || RuntimeState.Player == null)
-        {
-            _nextCombatPlayerStartHpOverride = null;
-            return;
-        }
+        BuildActionLookup();
 
-        RuntimeState.Player.CurrentHp = Mathf.Clamp(_nextCombatPlayerStartHpOverride.Value, 0, RuntimeState.Player.MaxHp);
-        _nextCombatPlayerStartHpOverride = null;
-    }
-
-    private void InitializeRuntime()
-    {
-        if (!ValidateAndBuildActionData())
-        {
-            RuntimeState = null;
-            return;
-        }
-
+        CombatDifficultyDataSO difficulty = _config.selectedDifficulty;
         int totalSand = Mathf.Max(1, _config.totalSand);
         int lockedSand = Mathf.Clamp(_config.lockedSand, 0, Mathf.Max(0, totalSand - 1));
         int unlockedSand = Mathf.Max(1, totalSand - lockedSand);
-        int enemyGuard = Mathf.Max(1, _enemyData.baseGuard > 0 ? _enemyData.baseGuard : _config.breakThreshold);
+        int startSand = Mathf.Clamp(Mathf.Max(0, difficulty.playerStartSand), 0, unlockedSand);
 
         RuntimeState = new CombatRuntimeState
         {
@@ -160,632 +207,1203 @@ public class HourglassCombatManager : Singleton<HourglassCombatManager>
             IsCombatEnded = false,
             TotalSand = totalSand,
             LockedSand = lockedSand,
-            MinimumFall = Mathf.Max(0, _config.minimumFall),
-            MaxEnemyGuard = enemyGuard,
-            ThreatCap = Mathf.Max(1, _config.threatCap),
-            EnemyThreatGainPerTurn = Mathf.Max(0, _config.enemyThreatGainPerTurn),
-            HexThreatDelta = _config.hexThreatDelta,
-            BreakThreatDelta = _config.breakThreatDelta,
-            ResetThreatOnBreak = _config.resetThreatOnBreak,
-            EnemyRecoverGuardAmount = Mathf.Max(0, _config.enemyRecoverGuardAmount),
-            EnemyHighSandRecoverGuardBonus = Mathf.Max(0, _config.enemyHighSandRecoverGuardBonus),
-            EnemyWeakDamage = Mathf.Max(0, _config.enemyWeakDamage),
-            EnemyHeavyDamage = Mathf.Max(0, _config.enemyHeavyDamage),
-            EnemyHeavyPlusDamage = Mathf.Max(0, _config.enemyHeavyPlusDamage),
-            EnemyDesperationDamage = Mathf.Max(0, _config.enemyDesperationDamage),
-            EnemyDoubleActionFirstDamage = Mathf.Max(0, _config.enemyDoubleActionFirstDamage),
-            EnemyDoubleActionSecondDamage = Mathf.Max(0, _config.enemyDoubleActionSecondDamage),
-            AllowThreatMaxDoubleAction = _config.allowThreatMaxDoubleAction,
-            Player = CombatActorRuntime.CreateFromData(_playerData, 0, unlockedSand),
-            Enemy = CombatActorRuntime.CreateFromData(_enemyData, 0, unlockedSand, enemyGuard)
+            MinimumFall = Mathf.Max(0, difficulty.minimumFall),
+            PlayerSand = startSand,
+            UpperSand = startSand,
+            LowerSand = unlockedSand - startSand,
+            PlayerSpend = 0,
+            EnemySand = 0,
+            Pressure = 0,
+            Difficulty = string.Equals(difficulty.difficultyName, "Hard", StringComparison.OrdinalIgnoreCase)
+                ? CombatDifficulty.Hard
+                : CombatDifficulty.Standard,
+            DifficultyData = difficulty,
+            EnemyCostMin = Mathf.Max(0, difficulty.enemyCostMin),
+            EnableKillBonus = _config.enableKillBonus,
+            MaxKillBonusPerRound = Mathf.Max(0, _config.maxKillBonusPerRound),
+            KillBonusToken = 0,
+            KillBonusGrantedThisRound = false,
+            KillBonusCommandConsumedThisRound = false,
+            SelectedAllySlot = Mathf.Clamp(_config.defaultSelectedAllyIndex, 0, 2),
+            SelectedEnemySlot = Mathf.Clamp(_config.defaultSelectedEnemyIndex, 0, 2)
         };
 
-        if (RuntimeState.Player == null || RuntimeState.Enemy == null)
-        {
-            Debug.LogError("[Combat] Failed to create actor runtime from actor data.", this);
-            RuntimeState = null;
-            return;
-        }
+        BuildParty(RuntimeState.Allies, _config.allyPartyActors, CombatActorType.Ally);
+        BuildParty(RuntimeState.Enemies, _config.enemyPartyActors, CombatActorType.Enemy);
+        InitializeEnemyActionValue();
+        EnsureSelectionsAreAlive();
 
-        RuntimeState.UpperSand = Mathf.Clamp(_config.defaultPlayerSand, 0, unlockedSand);
-        RuntimeState.LowerSand = unlockedSand - RuntimeState.UpperSand;
-        RuntimeState.SyncActorSand();
+        return true;
     }
 
-    private void TryExecutePlayerAction(CombatActionType actionType)
+    private bool ValidateConfig()
     {
-        if (actionType == CombatActionType.EndTurn)
+        if (_config == null)
         {
-            EventBus.Instance.Publish(new CombatActionExecutedEvent(CreateSnapshot(CombatActorType.Player, actionType, 0, 0)));
-            Debug.Log("[Combat] Action Executed: Player EndTurn");
-            EndPlayerTurn();
-            return;
-        }
-
-        CombatActionDataSO actionData = GetActionData(actionType);
-        if (actionData == null)
-        {
-            Debug.LogError($"[Combat] Action Failed: {actionType} | Reason: ActionData missing", this);
-            return;
-        }
-
-        CombatActionResult result = _actionResolver.Resolve(
-            RuntimeState.Player,
-            RuntimeState.Enemy,
-            actionData,
-            RuntimeState.MaxEnemyGuard,
-            RuntimeState.HexThreatDelta);
-
-        if (!result.Succeeded)
-        {
-            Debug.LogWarning($"[Combat] Action Failed: {actionType} | Reason: {result.FailureReason}");
-            return;
-        }
-
-        EventBus.Instance.Publish(new CombatActionExecutedEvent(CreateSnapshot(CombatActorType.Player, result.ActionType, result.SpentSand, result.DamageDealt)));
-        if (result.DamageDealt > 0)
-        {
-            EventBus.Instance.Publish(new CombatActorDamagedEvent(CreateSnapshot(CombatActorType.Enemy, result.ActionType, result.SpentSand, result.DamageDealt)));
-        }
-
-        if (result.BreakTriggered)
-        {
-            ApplyBreakThreatReduction(RuntimeState.Enemy);
-            EventBus.Instance.Publish(new CombatBreakTriggeredEvent(CreateSnapshot(CombatActorType.Enemy, result.ActionType, result.SpentSand, result.DamageDealt)));
-            Debug.Log("[Combat] Break Triggered: Enemy");
-        }
-
-        if (result.GroggyTriggered)
-        {
-            EventBus.Instance.Publish(new CombatGroggyAppliedEvent(CreateSnapshot(CombatActorType.Enemy, result.ActionType, result.SpentSand, result.DamageDealt)));
-            Debug.Log("[Combat] Groggy Applied: Enemy(Pending)");
-        }
-
-        UpdateHourglassFromCurrentActor();
-        Debug.Log($"[Combat] Action Executed: Player {result.ActionType}");
-        PublishStateDebugLog();
-
-        if (RuntimeState.Enemy.IsDead)
-        {
-            EndCombat(true);
-        }
-    }
-
-    private void EndPlayerTurn()
-    {
-        StartTurnTransition(CombatTurnState.PlayerTurn);
-    }
-
-    private IEnumerator RunEnemyTurnSequence()
-    {
-        if (RuntimeState == null || RuntimeState.IsCombatEnded || RuntimeState.TurnState != CombatTurnState.EnemyTurn || _isTurnTransitioning)
-        {
-            yield break;
-        }
-
-        float turnStartWait = Mathf.Max(0f, _enemyTurnStartDelay, _flipDuration);
-        if (turnStartWait > 0f)
-        {
-            yield return new WaitForSeconds(turnStartWait);
-        }
-
-        CombatActorRuntime enemy = RuntimeState.Enemy;
-        bool threatMaxAtTurnStart = enemy != null && enemy.EnemyThreat >= RuntimeState.ThreatCap;
-        bool enemyActed = false;
-
-        if (!RuntimeState.IsCombatEnded && enemy != null && !enemy.IsDead)
-        {
-            EnemyIntentType intent = DetermineEnemyIntent(enemy);
-            if (intent != EnemyIntentType.None)
-            {
-                EventBus.Instance.Publish(new CombatActionRequestedEvent(MapIntentToActionType(intent)));
-                if (_enemyActionDelay > 0f)
-                {
-                    yield return new WaitForSeconds(_enemyActionDelay);
-                }
-
-                enemyActed = ExecuteEnemyIntent(enemy, intent, threatMaxAtTurnStart);
-            }
-        }
-
-        ConsumeEnemyRemainingSand();
-        ApplyEnemyThreatOnTurnEnd(threatMaxAtTurnStart, enemyActed);
-        UpdateHourglassFromCurrentActor();
-        PublishStateDebugLog();
-
-        if (RuntimeState.Player.IsDead)
-        {
-            EndCombat(false);
-            yield break;
-        }
-
-        if (_enemyTurnEndDelay > 0f)
-        {
-            yield return new WaitForSeconds(_enemyTurnEndDelay);
-        }
-
-        EventBus.Instance.Publish(new CombatActionExecutedEvent(CreateSnapshot(CombatActorType.Enemy, CombatActionType.EndTurn, 0, 0)));
-        Debug.Log("[Combat] Action Executed: Enemy EndTurn");
-
-        if (_flipDuration > 0f)
-        {
-            yield return new WaitForSeconds(_flipDuration);
-        }
-
-        if (RuntimeState.Player.IsDead)
-        {
-            EndCombat(false);
-            yield break;
-        }
-
-        EndEnemyTurn();
-        _enemyTurnRoutine = null;
-    }
-
-    private void EndEnemyTurn()
-    {
-        StartTurnTransition(CombatTurnState.EnemyTurn);
-    }
-
-    private void StartTurnTransition(CombatTurnState endingTurnState)
-    {
-        if (_isTurnTransitioning || RuntimeState == null || RuntimeState.IsCombatEnded)
-        {
-            return;
-        }
-
-        if (_turnTransitionRoutine != null)
-        {
-            StopCoroutine(_turnTransitionRoutine);
-        }
-
-        _turnTransitionRoutine = StartCoroutine(RunTurnTransitionSequence(endingTurnState));
-    }
-
-    private IEnumerator RunTurnTransitionSequence(CombatTurnState endingTurnState)
-    {
-        _isTurnTransitioning = true;
-
-        CombatTurnProcessor.TurnTransitionContext transitionContext = _turnProcessor.BeginTurnTransition(RuntimeState);
-        if (transitionContext.ForcedFallAmount > 0)
-        {
-            ApplyPreFlipSandState(transitionContext);
-            EventBus.Instance.Publish(new CombatMinimumFallAppliedEvent(
-                transitionContext.ForcedFallActor,
-                transitionContext.ForcedFallAmount,
-                RuntimeState != null ? RuntimeState.MinimumFall : 0));
-
-            float wait = Mathf.Max(0f, _minimumFallTransitionDelay);
-            if (wait > 0f)
-            {
-                yield return new WaitForSeconds(wait);
-            }
-        }
-
-        CombatTurnProcessor.TurnTransitionResult transitionResult = _turnProcessor.CompleteTurnTransition(RuntimeState, transitionContext);
-        PublishTurnTransitionEvents(transitionResult, false);
-        EventBus.Instance.Publish(new CombatTurnEndedEvent(CreateSnapshot()));
-        Debug.Log($"[Combat] Turn Ended: {endingTurnState}");
-        PublishStateDebugLog();
-
-        if (RuntimeState != null && RuntimeState.IsCombatEnded)
-        {
-            _isTurnTransitioning = false;
-            _turnTransitionRoutine = null;
-            EndCombat(RuntimeState.Enemy.IsDead);
-            yield break;
-        }
-
-        EventBus.Instance.Publish(new CombatTurnStartedEvent(CreateSnapshot()));
-        Debug.Log($"[Combat] Turn Started: {RuntimeState.TurnState}");
-
-        _isTurnTransitioning = false;
-        _turnTransitionRoutine = null;
-
-        if (RuntimeState == null || RuntimeState.TurnState != CombatTurnState.EnemyTurn)
-        {
-            yield break;
-        }
-
-        if (_enemyTurnRoutine != null)
-        {
-            StopCoroutine(_enemyTurnRoutine);
-        }
-
-        _enemyTurnRoutine = StartCoroutine(RunEnemyTurnSequence());
-    }
-
-    private void ApplyPreFlipSandState(CombatTurnProcessor.TurnTransitionContext context)
-    {
-        if (RuntimeState == null)
-        {
-            return;
-        }
-
-        RuntimeState.UpperSand = context.CompletedUpper;
-        RuntimeState.LowerSand = context.CompletedLower;
-
-        CombatActorRuntime current = RuntimeState.GetActor(context.EndingTurnState);
-        CombatActorRuntime opponent = RuntimeState.GetOpponent(context.EndingTurnState);
-        if (current != null)
-        {
-            current.AvailableSand = context.CompletedUpper;
-            current.TransferredSand = context.CompletedLower;
-        }
-
-        if (opponent != null)
-        {
-            opponent.AvailableSand = 0;
-            opponent.TransferredSand = 0;
-        }
-    }
-
-    private EnemyIntentType DetermineEnemyIntent(CombatActorRuntime enemy)
-    {
-        if (enemy == null || enemy.IsDead)
-        {
-            return EnemyIntentType.None;
-        }
-
-        int upperSand = Mathf.Max(0, enemy.AvailableSand);
-        bool threatMax = enemy.EnemyThreat >= RuntimeState.ThreatCap;
-
-        if (threatMax)
-        {
-            return EnemyIntentType.DesperationStrike;
-        }
-
-        if (upperSand <= 2) return EnemyIntentType.RecoverGuard;
-        if (upperSand <= 4) return EnemyIntentType.WeakAttack;
-        if (upperSand <= 6) return EnemyIntentType.HeavyAttack;
-        return EnemyIntentType.HeavyAttackPlus;
-    }
-
-    private bool ExecuteEnemyIntent(CombatActorRuntime enemy, EnemyIntentType intent, bool threatMaxAtTurnStart)
-    {
-        if (enemy == null || RuntimeState == null || intent == EnemyIntentType.None)
-        {
+            Debug.LogError("[Combat] HourglassCombatConfigSO missing.");
             return false;
         }
 
-        CombatActionType actionType = MapIntentToActionType(intent);
-        int damage = 0;
-        int guardGain = 0;
+        if (_config.selectedDifficulty == null)
+        {
+            Debug.LogError("[Combat] selectedDifficulty is null.");
+            return false;
+        }
 
-        if (intent == EnemyIntentType.RecoverGuard)
+        if (_config.allyPartyActors == null || _config.allyPartyActors.Length < 3)
         {
-            guardGain = RuntimeState.EnemyRecoverGuardAmount;
+            Debug.LogError("[Combat] allyPartyActors must contain 3 actors.");
+            return false;
         }
-        else if (intent == EnemyIntentType.WeakAttack)
+
+        if (_config.enemyPartyActors == null || _config.enemyPartyActors.Length < 3)
         {
-            damage = RuntimeState.EnemyWeakDamage;
+            Debug.LogError("[Combat] enemyPartyActors must contain 3 actors.");
+            return false;
         }
-        else if (intent == EnemyIntentType.HeavyAttack)
+
+        for (int i = 0; i < 3; i++)
         {
-            damage = RuntimeState.EnemyHeavyDamage;
-        }
-        else if (intent == EnemyIntentType.HeavyAttackPlus)
-        {
-            damage = RuntimeState.EnemyHeavyPlusDamage;
-            if (!threatMaxAtTurnStart && enemy.AvailableSand >= 7)
+            if (_config.allyPartyActors[i] == null)
             {
-                guardGain = RuntimeState.EnemyHighSandRecoverGuardBonus;
+                Debug.LogError($"[Combat] allyPartyActors[{i}] is null.");
+                return false;
             }
-        }
-        else if (intent == EnemyIntentType.DesperationStrike)
-        {
-            damage = RuntimeState.EnemyDesperationDamage;
-        }
-        else if (intent == EnemyIntentType.DoubleAction)
-        {
-            int first = CombatActionResolver.ApplyEnemyIntentDamage(enemy, RuntimeState.Player, RuntimeState.EnemyDoubleActionFirstDamage);
-            int second = CombatActionResolver.ApplyEnemyIntentDamage(enemy, RuntimeState.Player, RuntimeState.EnemyDoubleActionSecondDamage);
-            damage = first + second;
-        }
 
-        if (guardGain > 0)
-        {
-            CombatActionResolver.ApplyEnemyRecoverGuard(enemy, guardGain);
-        }
-
-        if (damage > 0 && intent != EnemyIntentType.DoubleAction)
-        {
-            damage = CombatActionResolver.ApplyEnemyIntentDamage(enemy, RuntimeState.Player, damage);
-        }
-
-        // Enemy always executes one intent per turn. Move all remaining upper sand now
-        // so UI tween mirrors player-side spend timing instead of snapping at turn end.
-        int spentSand = Mathf.Max(0, enemy.AvailableSand);
-        if (spentSand > 0)
-        {
-            enemy.AvailableSand = 0;
-            enemy.TransferredSand += spentSand;
-        }
-
-        UpdateHourglassFromCurrentActor();
-        EventBus.Instance.Publish(new CombatActionExecutedEvent(CreateSnapshot(CombatActorType.Enemy, actionType, spentSand, damage)));
-        if (damage > 0)
-        {
-            EventBus.Instance.Publish(new CombatActorDamagedEvent(CreateSnapshot(CombatActorType.Player, actionType, 0, damage)));
+            if (_config.enemyPartyActors[i] == null)
+            {
+                Debug.LogError($"[Combat] enemyPartyActors[{i}] is null.");
+                return false;
+            }
         }
 
         return true;
     }
 
-    private void ConsumeEnemyRemainingSand()
+    private void BuildActionLookup()
     {
-        if (RuntimeState == null || RuntimeState.Enemy == null || RuntimeState.TurnState != CombatTurnState.EnemyTurn)
+        _actionByType.Clear();
+        if (_globalActionCatalog != null)
         {
-            return;
+            for (int i = 0; i < _globalActionCatalog.Length; i++)
+            {
+                CombatActionDataSO action = _globalActionCatalog[i];
+                if (action == null || action.actionType == CombatActionType.None)
+                {
+                    continue;
+                }
+
+                _actionByType[action.actionType] = action;
+            }
         }
 
-        int remaining = Mathf.Max(0, RuntimeState.Enemy.AvailableSand);
-        if (remaining <= 0)
-        {
-            return;
-        }
-
-        RuntimeState.Enemy.AvailableSand = 0;
-        RuntimeState.Enemy.TransferredSand += remaining;
+        AddActorActionsToLookup(_config.allyPartyActors);
+        AddActorActionsToLookup(_config.enemyPartyActors);
     }
 
-    private void ApplyEnemyThreatOnTurnEnd(bool threatMaxAtTurnStart, bool enemyActed)
+    private void AddActorActionsToLookup(CombatActorDataSO[] actors)
     {
-        if (RuntimeState == null || RuntimeState.Enemy == null || !enemyActed)
+        if (actors == null)
         {
             return;
         }
 
-        if (threatMaxAtTurnStart)
+        for (int i = 0; i < actors.Length; i++)
         {
-            RuntimeState.Enemy.EnemyThreat = 0;
-            return;
-        }
+            CombatActorDataSO actor = actors[i];
+            if (actor == null || actor.actionList == null)
+            {
+                continue;
+            }
 
-        RuntimeState.Enemy.EnemyThreat = Mathf.Clamp(
-            RuntimeState.Enemy.EnemyThreat + RuntimeState.EnemyThreatGainPerTurn,
-            0,
-            RuntimeState.ThreatCap);
-    }
+            for (int j = 0; j < actor.actionList.Length; j++)
+            {
+                CombatActionDataSO action = actor.actionList[j];
+                if (action == null || action.actionType == CombatActionType.None)
+                {
+                    continue;
+                }
 
-    private static CombatActionType MapIntentToActionType(EnemyIntentType intent)
-    {
-        if (intent == EnemyIntentType.RecoverGuard) return CombatActionType.RecoverGuard;
-        if (intent == EnemyIntentType.WeakAttack) return CombatActionType.WeakAttack;
-        if (intent == EnemyIntentType.HeavyAttack) return CombatActionType.HeavyAttack;
-        if (intent == EnemyIntentType.HeavyAttackPlus) return CombatActionType.HeavyAttackPlus;
-        if (intent == EnemyIntentType.DesperationStrike) return CombatActionType.DesperationStrike;
-        if (intent == EnemyIntentType.DoubleAction) return CombatActionType.DoubleAction;
-        return CombatActionType.None;
-    }
-
-    private void PublishTurnTransitionEvents(CombatTurnProcessor.TurnTransitionResult result, bool includeForcedFall)
-    {
-        if (includeForcedFall && result.ForcedFallAmount > 0)
-        {
-            EventBus.Instance.Publish(new CombatMinimumFallAppliedEvent(result.ForcedFallActor, result.ForcedFallAmount, RuntimeState != null ? RuntimeState.MinimumFall : 0));
-        }
-
-        if (result.BonusTurnGranted)
-        {
-            EventBus.Instance.Publish(new CombatBonusTurnGrantedEvent(result.BonusActor, CreateSnapshot()));
+                _actionByType[action.actionType] = action;
+            }
         }
     }
 
-    private void ApplyBreakThreatReduction(CombatActorRuntime enemy)
+    private void BuildParty(List<CombatActorRuntime> target, CombatActorDataSO[] source, CombatActorType expectedType)
     {
-        if (RuntimeState == null || enemy == null)
+        target.Clear();
+        int count = Mathf.Min(3, source.Length);
+        for (int i = 0; i < count; i++)
         {
-            return;
+            CombatActorRuntime runtime = CombatActorRuntime.Create(source[i], expectedType, i);
+            if (runtime != null)
+            {
+                runtime.SlotIndex = i;
+                target.Add(runtime);
+            }
         }
-
-        if (RuntimeState.ResetThreatOnBreak)
-        {
-            enemy.EnemyThreat = 0;
-            return;
-        }
-
-        enemy.EnemyThreat = Mathf.Clamp(enemy.EnemyThreat + RuntimeState.BreakThreatDelta, 0, RuntimeState.ThreatCap);
     }
 
-    private void UpdateHourglassFromCurrentActor()
+    private void InitializeEnemyActionValue()
     {
-        if (RuntimeState == null)
+        for (int i = 0; i < RuntimeState.Enemies.Count; i++)
+        {
+            CombatActorRuntime enemy = RuntimeState.Enemies[i];
+            if (enemy == null)
+            {
+                continue;
+            }
+
+            int speed = Mathf.Max(1, enemy.SpeedBase);
+            enemy.BaseActionValue = 10000f / speed;
+            enemy.CurrentActionValue = enemy.BaseActionValue;
+            if (enemy.BreakDelayRatio <= 0f)
+            {
+                enemy.BreakDelayRatio = 0.25f;
+            }
+        }
+    }
+
+    private void ApplyNextCombatPlayerHpOverrideIfNeeded()
+    {
+        if (!_nextCombatPlayerStartHpOverride.HasValue || RuntimeState == null || RuntimeState.Allies.Count == 0)
+        {
+            _nextCombatPlayerStartHpOverride = null;
+            return;
+        }
+
+        RuntimeState.Allies[0].CurrentHp = Mathf.Clamp(_nextCombatPlayerStartHpOverride.Value, 0, RuntimeState.Allies[0].MaxHp);
+        _nextCombatPlayerStartHpOverride = null;
+    }
+
+    private void BeginRound(int round)
+    {
+        if (RuntimeState == null || RuntimeState.IsCombatEnded)
         {
             return;
         }
 
-        CombatActorRuntime current = RuntimeState.GetActor(RuntimeState.TurnState);
-        CombatActorRuntime opponent = RuntimeState.GetOpponent(RuntimeState.TurnState);
-        if (current == null)
+        RuntimeState.TurnState = CombatTurnState.RoundStart;
+        RuntimeState.TurnIndex = Mathf.Max(1, round);
+
+        int previousPressure = RuntimeState.Pressure;
+        RuntimeState.Pressure = CombatTurnProcessor.ComputePressure(RuntimeState.DifficultyData, RuntimeState.TurnIndex);
+        if (previousPressure != RuntimeState.Pressure)
         {
-            return;
+            EventBus.Instance.Publish(new CombatPressureChangedEvent(previousPressure, RuntimeState.Pressure, CreateSnapshot()));
         }
 
         int unlockedSand = Mathf.Max(1, RuntimeState.TotalSand - RuntimeState.LockedSand);
-        int upper = Mathf.Clamp(current.AvailableSand, 0, unlockedSand);
-        int lower = Mathf.Clamp(current.TransferredSand, 0, unlockedSand);
+        RuntimeState.UpperSand = Mathf.Clamp(RuntimeState.PlayerSand, 0, unlockedSand);
+        RuntimeState.LowerSand = Mathf.Clamp(unlockedSand - RuntimeState.UpperSand, 0, unlockedSand);
 
-        if (upper + lower != unlockedSand)
+        RuntimeState.EnemyIntents.Clear();
+        RuntimeState.BeginRoundPlanning();
+        EnsureSelectionsAreAlive();
+
+        BuildEnemyIntentsForRound();
+        RebuildEnemyOrder("RoundStart");
+
+        EventBus.Instance.Publish(new CombatRoundStartedEvent(CreateSnapshot()));
+        Debug.Log($"[Combat] RoundStart R{RuntimeState.TurnIndex} | Pressure:{RuntimeState.Pressure}");
+        DebugTeamStatus("RoundStart");
+    }
+
+    private void BuildEnemyIntentsForRound()
+    {
+        for (int i = 0; i < RuntimeState.Enemies.Count; i++)
         {
-            lower = Mathf.Clamp(unlockedSand - upper, 0, unlockedSand);
-        }
+            CombatActorRuntime enemy = RuntimeState.Enemies[i];
+            if (enemy == null || enemy.IsDead || enemy.EnemyIntentList.Count == 0)
+            {
+                continue;
+            }
 
-        RuntimeState.UpperSand = upper;
-        RuntimeState.LowerSand = lower;
-        current.AvailableSand = upper;
-        current.TransferredSand = lower;
+            int index = (RuntimeState.TurnIndex - 1) % enemy.EnemyIntentList.Count;
+            EnemyIntentDataSO intentData = enemy.EnemyIntentList[index];
+            if (intentData == null)
+            {
+                continue;
+            }
 
-        if (opponent != null)
-        {
-            opponent.AvailableSand = 0;
-            opponent.TransferredSand = 0;
+            CombatIntentRuntime runtimeIntent = CreateRuntimeIntent(enemy, intentData);
+            RuntimeState.EnemyIntents.Add(runtimeIntent);
+            EventBus.Instance.Publish(new CombatIntentShownEvent(ToIntentSnapshot(runtimeIntent), CreateSnapshot()));
+            Debug.Log($"[Combat] EnemyIntentShown | {enemy.DisplayName} {runtimeIntent.ActionType} c{runtimeIntent.EffectiveCost}/{runtimeIntent.BaseCost}");
         }
     }
 
-    private void EndCombat(bool playerWon)
+    private CombatIntentRuntime CreateRuntimeIntent(CombatActorRuntime source, EnemyIntentDataSO data)
     {
-        if (RuntimeState == null)
+        int targetId = ResolveTargetIdForIntent(data.targetRule, source);
+        int minCost = Mathf.Max(data.minEffectiveCost, RuntimeState.EnemyCostMin);
+        int effectiveCost = Mathf.Max(minCost, Mathf.Max(0, data.baseCost) - RuntimeState.Pressure);
+
+        int speedFromIntent = Mathf.Max(0, data.speed);
+        if (speedFromIntent > 0)
+        {
+            float adjusted = 10000f / speedFromIntent;
+            source.BaseActionValue = Mathf.Max(1f, adjusted);
+            if (source.CurrentActionValue < 1f)
+            {
+                source.CurrentActionValue = source.BaseActionValue;
+            }
+        }
+
+        return new CombatIntentRuntime
+        {
+            IntentId = string.IsNullOrWhiteSpace(data.intentId) ? data.name : data.intentId,
+            DisplayName = string.IsNullOrWhiteSpace(data.displayName) ? data.name : data.displayName,
+            SourceActorId = source.ActorId,
+            SourceSlotIndex = source.SlotIndex,
+            ActionType = data.actionType,
+            TargetActorId = targetId,
+            BaseCost = Mathf.Max(0, data.baseCost),
+            MinEffectiveCost = minCost,
+            EffectiveCost = effectiveCost,
+            Speed = speedFromIntent,
+            HpDamage = Mathf.Max(0, data.hpDamage),
+            GuardDamage = Mathf.Max(0, data.guardDamage),
+            HealAmount = Mathf.Max(0, data.healAmount),
+            TargetRule = data.targetRule,
+            IsAoe = data.isAreaAction,
+            FallbackActionType = data.fallbackActionType
+        };
+    }
+
+    private int ResolveTargetIdForIntent(CombatTargetType targetType, CombatActorRuntime source)
+    {
+        if (targetType == CombatTargetType.Self)
+        {
+            return source != null ? source.ActorId : -1;
+        }
+
+        if (targetType == CombatTargetType.SingleAlly)
+        {
+            CombatActorRuntime allyEnemyTeam = RuntimeState.GetFirstAliveEnemy();
+            return allyEnemyTeam != null ? allyEnemyTeam.ActorId : -1;
+        }
+
+        CombatActorRuntime target = RuntimeState.GetFirstAliveAlly();
+        return target != null ? target.ActorId : -1;
+    }
+
+    private bool CanAcceptPlayerInput()
+    {
+        return RuntimeState != null
+            && !RuntimeState.IsCombatEnded
+            && RuntimeState.TurnState == CombatTurnState.PlayerCommand;
+    }
+
+    private void RequestActionAtQuickSlot(int actionIndex)
+    {
+        if (!CanAcceptPlayerInput())
         {
             return;
         }
 
-        if (RuntimeState.IsCombatEnded && RuntimeState.TurnState == CombatTurnState.Ended)
+        CombatActorRuntime source = RuntimeState.GetSelectedAlly();
+        if (source == null || source.IsDead || actionIndex < 0 || source.ActionList.Count <= actionIndex)
+        {
+            return;
+        }
+
+        CombatActionDataSO actionData = source.ActionList[actionIndex];
+        if (!CanQueueActionForSelectedAlly(actionData, out string reason))
+        {
+            Debug.LogWarning($"[Combat] Queue blocked: {reason}");
+            return;
+        }
+
+        CombatCommandRuntime command = CreateRuntimeCommand(source, actionData);
+        QueueOrReplaceCommand(command);
+        RecomputePlayerSpend();
+
+        int unlockedSand = Mathf.Max(1, RuntimeState.TotalSand - RuntimeState.LockedSand);
+        int predictedUpper = Mathf.Clamp(RuntimeState.UpperSand - RuntimeState.PlayerSpend, 0, unlockedSand);
+        int predictedLower = Mathf.Clamp(RuntimeState.LowerSand + RuntimeState.PlayerSpend, 0, unlockedSand);
+        EventBus.Instance.Publish(new CombatCommandQueuedEvent(command, predictedUpper, predictedLower, CreateSnapshot()));
+        Debug.Log($"[Combat] CommandQueued | {command.DisplayName} c{command.Cost} -> U:{predictedUpper} L:{predictedLower}");
+    }
+
+    private void QueueOrReplaceCommand(CombatCommandRuntime command)
+    {
+        int existingIndex = FindFirstQueuedCommandIndex(command.SourceActorId);
+        if (existingIndex >= 0)
+        {
+            bool canUseBonus = RuntimeState.EnableKillBonus
+                && RuntimeState.KillBonusToken > 0
+                && !RuntimeState.KillBonusCommandConsumedThisRound
+                && RuntimeState.QueuedCommands.Count >= RuntimeState.CountAliveAllies();
+
+            if (canUseBonus)
+            {
+                RuntimeState.KillBonusCommandConsumedThisRound = true;
+                RuntimeState.QueuedCommands.Add(command);
+                return;
+            }
+
+            RuntimeState.QueuedCommands[existingIndex] = command;
+            return;
+        }
+
+        RuntimeState.QueuedCommands.Add(command);
+    }
+
+    private CombatCommandRuntime CreateRuntimeCommand(CombatActorRuntime source, CombatActionDataSO actionData)
+    {
+        return new CombatCommandRuntime
+        {
+            ActionId = string.IsNullOrWhiteSpace(actionData.actionId) ? actionData.name : actionData.actionId,
+            DisplayName = string.IsNullOrWhiteSpace(actionData.displayName) ? actionData.name : actionData.displayName,
+            SourceActorId = source.ActorId,
+            SourceSlotIndex = source.SlotIndex,
+            TargetActorId = ResolveTargetIdForAction(actionData, source),
+            ActionType = actionData.actionType,
+            Cost = Mathf.Max(0, actionData.baseCost),
+            Speed = Mathf.Max(0, actionData.speed),
+            HpDamage = Mathf.Max(0, actionData.hpDamage),
+            BreakDamage = Mathf.Max(0, actionData.guardDamage),
+            GuardGain = Mathf.Max(0, actionData.guardGain),
+            HealAmount = Mathf.Max(0, actionData.healAmount),
+            TargetType = actionData.targetType,
+            CanTargetAlly = actionData.canTargetAlly,
+            CanTargetEnemy = actionData.canTargetEnemy,
+            IsAreaAction = actionData.isAreaAction,
+            FallbackActionType = actionData.fallbackActionType,
+            AppliesToAllAllies = actionData.targetType == CombatTargetType.AllAllies
+        };
+    }
+
+    private int ResolveTargetIdForAction(CombatActionDataSO actionData, CombatActorRuntime source)
+    {
+        if (actionData == null)
+        {
+            return -1;
+        }
+
+        if (actionData.targetType == CombatTargetType.Self)
+        {
+            return source.ActorId;
+        }
+
+        if (actionData.targetType == CombatTargetType.SingleAlly)
+        {
+            CombatActorRuntime ally = RuntimeState.GetSelectedAlly() ?? RuntimeState.GetFirstAliveAlly();
+            return ally != null ? ally.ActorId : -1;
+        }
+
+        if (actionData.targetType == CombatTargetType.SingleEnemy)
+        {
+            CombatActorRuntime enemy = RuntimeState.GetSelectedEnemy() ?? RuntimeState.GetFirstAliveEnemy();
+            return enemy != null ? enemy.ActorId : -1;
+        }
+
+        return -1;
+    }
+
+    private void RecomputePlayerSpend()
+    {
+        int spend = 0;
+        for (int i = 0; i < RuntimeState.QueuedCommands.Count; i++)
+        {
+            spend += Mathf.Max(0, RuntimeState.QueuedCommands[i].Cost);
+        }
+
+        RuntimeState.PlayerSpend = Mathf.Max(0, spend);
+    }
+
+    private void ConfirmAndRunRound()
+    {
+        RuntimeState.TurnState = CombatTurnState.PlayerResolving;
+        RecomputePlayerSpend();
+        EventBus.Instance.Publish(new CombatCommandConfirmedEvent(RuntimeState.PlayerSpend, CreateSnapshot()));
+        Debug.Log($"[Combat] CommandConfirmed | Spend:{RuntimeState.PlayerSpend}");
+
+        if (RuntimeState.KillBonusCommandConsumedThisRound && RuntimeState.KillBonusToken > 0)
+        {
+            RuntimeState.KillBonusToken = Mathf.Max(0, RuntimeState.KillBonusToken - 1);
+        }
+
+        MovePlayerSpendFromUpperToLower();
+        ResolveAllyCommands();
+        EvaluateCombatEnd();
+        if (RuntimeState.IsCombatEnded)
+        {
+            return;
+        }
+
+        ApplyMinimumFallAndFlip();
+        EvaluateCombatEnd();
+        if (RuntimeState.IsCombatEnded)
+        {
+            return;
+        }
+
+        ResolveEnemyTurn();
+        EvaluateCombatEnd();
+        if (RuntimeState.IsCombatEnded)
+        {
+            return;
+        }
+
+        BeginRound(RuntimeState.TurnIndex + 1);
+    }
+
+    private void MovePlayerSpendFromUpperToLower()
+    {
+        int unlockedSand = Mathf.Max(1, RuntimeState.TotalSand - RuntimeState.LockedSand);
+        int spend = Mathf.Clamp(RuntimeState.PlayerSpend, 0, RuntimeState.UpperSand);
+        RuntimeState.UpperSand = Mathf.Clamp(RuntimeState.UpperSand - spend, 0, unlockedSand);
+        RuntimeState.LowerSand = Mathf.Clamp(RuntimeState.LowerSand + spend, 0, unlockedSand);
+    }
+
+    private void ResolveAllyCommands()
+    {
+        List<CombatCommandRuntime> executionOrder = BuildAllyExecutionOrder();
+        for (int i = 0; i < executionOrder.Count; i++)
+        {
+            CombatCommandRuntime command = executionOrder[i];
+            CombatActorRuntime source = RuntimeState.GetActorById(command.SourceActorId);
+            if (source == null || source.IsDead)
+            {
+                EventBus.Instance.Publish(new CombatAllyCommandResolvedEvent(command, false, "Dead", CreateSnapshot()));
+                continue;
+            }
+
+            CombatActionResult result = ApplyCommand(command, source);
+            string message = result.Succeeded ? "Resolved" : (result.FailureReason ?? "Failed");
+            EventBus.Instance.Publish(new CombatAllyCommandResolvedEvent(command, result.Succeeded, message, CreateSnapshot()));
+            Debug.Log($"[Combat] AllyCommandResolved | {source.DisplayName} {command.ActionType} {message}");
+
+            EvaluateCombatEnd();
+            if (RuntimeState.IsCombatEnded)
+            {
+                return;
+            }
+        }
+    }
+
+    private List<CombatCommandRuntime> BuildAllyExecutionOrder()
+    {
+        List<CombatCommandRuntime> ordered = new List<CombatCommandRuntime>(RuntimeState.QueuedCommands.Count);
+        for (int slot = 0; slot < RuntimeState.Allies.Count; slot++)
+        {
+            for (int i = 0; i < RuntimeState.QueuedCommands.Count; i++)
+            {
+                CombatCommandRuntime command = RuntimeState.QueuedCommands[i];
+                if (command.SourceSlotIndex == slot)
+                {
+                    ordered.Add(command);
+                }
+            }
+        }
+
+        return ordered;
+    }
+
+    private CombatActionResult ApplyCommand(CombatCommandRuntime command, CombatActorRuntime source)
+    {
+        if (command.TargetType == CombatTargetType.AllAllies)
+        {
+            for (int i = 0; i < RuntimeState.Allies.Count; i++)
+            {
+                CombatActorRuntime ally = RuntimeState.Allies[i];
+                if (ally == null || ally.IsDead)
+                {
+                    continue;
+                }
+
+                int beforeGuard = ally.GuardValue;
+                if (command.GuardGain > 0)
+                {
+                    CombatActionResolver.ApplyGuardToActor(ally, command.GuardGain);
+                }
+
+                if (command.HealAmount > 0)
+                {
+                    ally.Heal(command.HealAmount);
+                }
+
+                PublishGuardChangedIfNeeded(ally, beforeGuard, ally.GuardValue);
+            }
+
+            return new CombatActionResult(command.ActionType, true, 0, 0, 0, false, false);
+        }
+
+        if (command.TargetType == CombatTargetType.Self || command.TargetType == CombatTargetType.SingleAlly)
+        {
+            CombatActorRuntime allyTarget = RuntimeState.GetActorById(command.TargetActorId) ?? RuntimeState.GetFirstAliveAlly();
+            if (allyTarget == null || allyTarget.IsDead)
+            {
+                return new CombatActionResult(command.ActionType, false, 0, 0, 0, false, false, "NoAliveAlly");
+            }
+
+            int beforeGuard = allyTarget.GuardValue;
+            if (command.GuardGain > 0)
+            {
+                CombatActionResolver.ApplyGuardToActor(allyTarget, command.GuardGain);
+            }
+
+            if (command.HealAmount > 0)
+            {
+                allyTarget.Heal(command.HealAmount);
+            }
+
+            PublishGuardChangedIfNeeded(allyTarget, beforeGuard, allyTarget.GuardValue);
+            return new CombatActionResult(command.ActionType, true, 0, 0, 0, false, false);
+        }
+
+        CombatActorRuntime enemyTarget = RuntimeState.GetActorById(command.TargetActorId);
+        if (enemyTarget == null || enemyTarget.IsDead || enemyTarget.ActorType != CombatActorType.Enemy)
+        {
+            enemyTarget = RuntimeState.GetFirstAliveEnemy();
+        }
+
+        if (enemyTarget == null || enemyTarget.IsDead)
+        {
+            return new CombatActionResult(command.ActionType, false, 0, 0, 0, false, false, "NoAliveEnemy");
+        }
+
+        int beforeGuardValue = enemyTarget.GuardValue;
+        CombatActionResult result = _actionResolver.ResolvePlayerCommand(source, enemyTarget, command);
+        PublishGuardChangedIfNeeded(enemyTarget, beforeGuardValue, enemyTarget.GuardValue);
+        if (result.HpDamage > 0)
+        {
+            EventBus.Instance.Publish(new CombatActorDamagedEvent(enemyTarget.ActorId, result.HpDamage, CreateSnapshot()));
+        }
+
+        if (result.BreakTriggered)
+        {
+            HandleEnemyBroken(enemyTarget);
+        }
+
+        if (result.TargetKilled)
+        {
+            HandleActorKilled(enemyTarget, source);
+        }
+
+        return result;
+    }
+
+    private void ApplyMinimumFallAndFlip()
+    {
+        CombatTurnProcessor.MinimumFallResult minimumFallResult = _turnProcessor.ApplyMinimumFall(RuntimeState);
+        EventBus.Instance.Publish(new CombatMinimumFallAppliedEvent(
+            minimumFallResult.ForcedFallAmount,
+            RuntimeState.MinimumFall,
+            minimumFallResult.UpperAfter,
+            minimumFallResult.LowerAfter,
+            CreateSnapshot()));
+
+        int transferredToEnemy = Mathf.Max(0, RuntimeState.LowerSand);
+        RuntimeState.TurnState = CombatTurnState.Flipping;
+        _turnProcessor.FlipHourglass(RuntimeState, transferredToEnemy);
+        EventBus.Instance.Publish(new CombatHourglassFlippedEvent(RuntimeState.EnemySand, CreateSnapshot()));
+        Debug.Log($"[Combat] HourglassFlipped | transferredToEnemy:{transferredToEnemy} EnemySand:{RuntimeState.EnemySand}");
+    }
+
+    private void ResolveEnemyTurn()
+    {
+        RuntimeState.TurnState = CombatTurnState.EnemyResolving;
+        RebuildEnemyOrder("EnemyTurnStarted");
+        CombatTimelineEntrySnapshot[] orderSnapshot = BuildTimelineSnapshotArray();
+
+        EventBus.Instance.Publish(new CombatTimelineStartedEvent(orderSnapshot, CreateSnapshot()));
+        Debug.Log($"[Combat] EnemyTurnStarted | Count:{orderSnapshot.Length}");
+
+        for (int i = 0; i < RuntimeState.EnemyOrder.Count; i++)
+        {
+            if (RuntimeState.IsCombatEnded)
+            {
+                return;
+            }
+
+            CombatTimelineEntryRuntime orderEntry = RuntimeState.EnemyOrder[i];
+            CombatActorRuntime enemy = RuntimeState.GetActorById(orderEntry.SourceActorId);
+            PublishEnemyEntryEvent(orderEntry, "EnemyOrderEntryStarted");
+
+            if (enemy == null || enemy.IsDead)
+            {
+                PublishEnemyEntryResolved(orderEntry, false, "Dead");
+                continue;
+            }
+
+            if (enemy.BreakSkipCount > 0)
+            {
+                enemy.BreakSkipCount = Mathf.Max(0, enemy.BreakSkipCount - 1);
+                enemy.SkipCurrentAction = enemy.BreakSkipCount > 0;
+                enemy.GuardValue = enemy.MaxGuard;
+                enemy.CurrentActionValue += enemy.BaseActionValue;
+
+                PublishEnemyEntryResolved(orderEntry, false, "EnemyActionSkippedByBreak");
+                Debug.Log($"[Combat] EnemyActionSkippedByBreak | {enemy.DisplayName}");
+                continue;
+            }
+
+            CombatIntentRuntime? intent = FindIntentForEnemy(enemy.ActorId);
+            if (!intent.HasValue)
+            {
+                enemy.CurrentActionValue += enemy.BaseActionValue;
+                PublishEnemyEntryResolved(orderEntry, true, "NoAction");
+                continue;
+            }
+
+            ResolveEnemyIntentForEntry(enemy, intent.Value, orderEntry);
+            EvaluateCombatEnd();
+            if (RuntimeState.IsCombatEnded)
+            {
+                return;
+            }
+        }
+    }
+
+    private void ResolveEnemyIntentForEntry(CombatActorRuntime enemy, CombatIntentRuntime intent, CombatTimelineEntryRuntime orderEntry)
+    {
+        CombatIntentRuntime resolvedIntent = intent;
+        bool usedFallback = false;
+
+        if (RuntimeState.EnemySand < intent.EffectiveCost)
+        {
+            if (!TryBuildFallbackIntent(intent, out CombatIntentRuntime fallback) || RuntimeState.EnemySand < fallback.EffectiveCost)
+            {
+                enemy.CurrentActionValue += enemy.BaseActionValue;
+                EventBus.Instance.Publish(new CombatIntentFailedEvent(ToIntentSnapshot(intent), "NotEnoughSand", CreateSnapshot()));
+                PublishEnemyEntryResolved(orderEntry, false, "EnemyIntentFailed");
+                Debug.Log($"[Combat] EnemyIntentFailed | {enemy.DisplayName} {intent.ActionType} NotEnoughSand");
+                return;
+            }
+
+            resolvedIntent = fallback;
+            usedFallback = true;
+        }
+
+        RuntimeState.EnemySand = Mathf.Max(0, RuntimeState.EnemySand - resolvedIntent.EffectiveCost);
+        CombatActionResult result = ApplyIntent(resolvedIntent, enemy);
+        enemy.CurrentActionValue += enemy.BaseActionValue;
+
+        if (!result.Succeeded)
+        {
+            EventBus.Instance.Publish(new CombatIntentFailedEvent(ToIntentSnapshot(resolvedIntent), result.FailureReason ?? "Failed", CreateSnapshot()));
+            PublishEnemyEntryResolved(orderEntry, false, "EnemyIntentFailed");
+            return;
+        }
+
+        EventBus.Instance.Publish(new CombatIntentResolvedEvent(ToIntentSnapshot(resolvedIntent), resolvedIntent.EffectiveCost, CreateSnapshot()));
+        PublishEnemyEntryResolved(orderEntry, true, usedFallback ? "EnemyFallbackResolved" : "EnemyIntentResolved");
+        Debug.Log($"[Combat] {(usedFallback ? "EnemyFallbackResolved" : "EnemyIntentResolved")} | {enemy.DisplayName} {resolvedIntent.ActionType} spend:{resolvedIntent.EffectiveCost}");
+    }
+
+    private CombatIntentRuntime? FindIntentForEnemy(int enemyActorId)
+    {
+        for (int i = 0; i < RuntimeState.EnemyIntents.Count; i++)
+        {
+            if (RuntimeState.EnemyIntents[i].SourceActorId == enemyActorId)
+            {
+                return RuntimeState.EnemyIntents[i];
+            }
+        }
+
+        return null;
+    }
+
+    private CombatActionResult ApplyIntent(CombatIntentRuntime intent, CombatActorRuntime source)
+    {
+        if (intent.TargetRule == CombatTargetType.AllEnemies || intent.TargetRule == CombatTargetType.AllAllies || intent.IsAoe)
+        {
+            if (intent.HealAmount > 0)
+            {
+                return _actionResolver.ResolveEnemyIntentHealAll(source, RuntimeState.Enemies, intent);
+            }
+
+            int total = 0;
+            for (int i = 0; i < RuntimeState.Allies.Count; i++)
+            {
+                CombatActorRuntime target = RuntimeState.Allies[i];
+                if (target == null || target.IsDead)
+                {
+                    continue;
+                }
+
+                int damaged = target.ApplyIncomingDamage(intent.HpDamage);
+                total += damaged;
+                if (damaged > 0)
+                {
+                    EventBus.Instance.Publish(new CombatActorDamagedEvent(target.ActorId, damaged, CreateSnapshot()));
+                    if (target.IsDead)
+                    {
+                        HandleActorKilled(target, source);
+                    }
+                }
+            }
+
+            return new CombatActionResult(intent.ActionType, true, total, 0, 0, false, false);
+        }
+
+        CombatActorRuntime targetSingle = RuntimeState.GetActorById(intent.TargetActorId);
+        if (targetSingle == null || targetSingle.IsDead || targetSingle.ActorType != CombatActorType.Ally)
+        {
+            targetSingle = RuntimeState.GetFirstAliveAlly();
+        }
+
+        CombatActionResult result = _actionResolver.ResolveEnemyIntentSingleTarget(source, targetSingle, intent);
+        if (result.Succeeded && result.HpDamage > 0 && targetSingle != null)
+        {
+            EventBus.Instance.Publish(new CombatActorDamagedEvent(targetSingle.ActorId, result.HpDamage, CreateSnapshot()));
+            if (targetSingle.IsDead)
+            {
+                HandleActorKilled(targetSingle, source);
+            }
+        }
+
+        return result;
+    }
+
+    private bool TryBuildFallbackIntent(CombatIntentRuntime intent, out CombatIntentRuntime fallback)
+    {
+        fallback = default;
+        if (intent.FallbackActionType == CombatActionType.None)
+        {
+            return false;
+        }
+
+        if (!_actionByType.TryGetValue(intent.FallbackActionType, out CombatActionDataSO fallbackAction) || fallbackAction == null)
+        {
+            return false;
+        }
+
+        int minCost = Mathf.Max(1, RuntimeState.EnemyCostMin);
+        int effectiveCost = Mathf.Max(minCost, Mathf.Max(0, fallbackAction.baseCost) - RuntimeState.Pressure);
+        fallback = intent;
+        fallback.ActionType = fallbackAction.actionType;
+        fallback.DisplayName = string.IsNullOrWhiteSpace(fallbackAction.displayName) ? fallbackAction.name : fallbackAction.displayName;
+        fallback.BaseCost = Mathf.Max(0, fallbackAction.baseCost);
+        fallback.MinEffectiveCost = minCost;
+        fallback.EffectiveCost = effectiveCost;
+        fallback.Speed = Mathf.Max(0, fallbackAction.speed > 0 ? fallbackAction.speed : intent.Speed);
+        fallback.HpDamage = Mathf.Max(0, fallbackAction.hpDamage);
+        fallback.GuardDamage = Mathf.Max(0, fallbackAction.guardDamage);
+        fallback.HealAmount = Mathf.Max(0, fallbackAction.healAmount);
+        fallback.TargetRule = fallbackAction.targetType;
+        fallback.IsAoe = fallbackAction.isAreaAction;
+        fallback.FallbackActionType = CombatActionType.None;
+        fallback.TargetActorId = ResolveFallbackTarget(fallbackAction.targetType, intent.SourceActorId);
+        return true;
+    }
+
+    private int ResolveFallbackTarget(CombatTargetType targetType, int sourceActorId)
+    {
+        if (targetType == CombatTargetType.Self)
+        {
+            return sourceActorId;
+        }
+
+        if (targetType == CombatTargetType.SingleAlly)
+        {
+            CombatActorRuntime target = RuntimeState.GetFirstAliveEnemy();
+            return target != null ? target.ActorId : -1;
+        }
+
+        CombatActorRuntime ally = RuntimeState.GetFirstAliveAlly();
+        return ally != null ? ally.ActorId : -1;
+    }
+
+    private void HandleEnemyBroken(CombatActorRuntime enemy)
+    {
+        if (enemy == null || enemy.ActorType != CombatActorType.Enemy || enemy.IsDead)
+        {
+            return;
+        }
+
+        enemy.BreakSkipCount += 1;
+        enemy.SkipCurrentAction = true;
+        enemy.CurrentActionValue += enemy.BaseActionValue * Mathf.Max(0f, enemy.BreakDelayRatio);
+
+        EventBus.Instance.Publish(new CombatActorBrokenEvent(enemy.ActorId, CreateSnapshot()));
+        RebuildEnemyOrder("ActorBroken");
+        Debug.Log($"[Combat] ActorBroken | {enemy.DisplayName} SkipCount:{enemy.BreakSkipCount}");
+    }
+
+    private void HandleActorKilled(CombatActorRuntime victim, CombatActorRuntime killer)
+    {
+        if (victim == null)
+        {
+            return;
+        }
+
+        EventBus.Instance.Publish(new CombatActorKilledEvent(victim.ActorId, CreateSnapshot()));
+
+        if (victim.ActorType == CombatActorType.Enemy)
+        {
+            RebuildEnemyOrder("ActorKilled");
+        }
+
+        if (killer != null
+            && killer.ActorType == CombatActorType.Ally
+            && victim.ActorType == CombatActorType.Enemy
+            && RuntimeState.EnableKillBonus
+            && RuntimeState.MaxKillBonusPerRound > 0
+            && !RuntimeState.KillBonusGrantedThisRound)
+        {
+            RuntimeState.KillBonusGrantedThisRound = true;
+            RuntimeState.KillBonusToken += 1;
+            EventBus.Instance.Publish(new CombatKillBonusGrantedEvent(killer.ActorId, RuntimeState.KillBonusToken, CreateSnapshot()));
+            Debug.Log($"[Combat] KillBonusGranted | Token:{RuntimeState.KillBonusToken}");
+        }
+    }
+
+    private void PublishGuardChangedIfNeeded(CombatActorRuntime actor, int before, int after)
+    {
+        if (actor == null || before == after)
+        {
+            return;
+        }
+
+        EventBus.Instance.Publish(new CombatActorGuardChangedEvent(actor.ActorId, before, after, CreateSnapshot()));
+    }
+
+    private void RebuildEnemyOrder(string reason)
+    {
+        RuntimeState.EnemyOrder.Clear();
+
+        List<CombatActorRuntime> aliveEnemies = new List<CombatActorRuntime>(RuntimeState.Enemies.Count);
+        for (int i = 0; i < RuntimeState.Enemies.Count; i++)
+        {
+            CombatActorRuntime enemy = RuntimeState.Enemies[i];
+            if (enemy != null && !enemy.IsDead)
+            {
+                aliveEnemies.Add(enemy);
+            }
+        }
+
+        aliveEnemies.Sort(CompareEnemyOrder);
+
+        for (int i = 0; i < aliveEnemies.Count; i++)
+        {
+            CombatActorRuntime enemy = aliveEnemies[i];
+            bool isSkipped = enemy.BreakSkipCount > 0;
+            bool isDelayed = enemy.CurrentActionValue > (enemy.BaseActionValue + 0.01f);
+            string status = isSkipped ? "Skip" : (isDelayed ? "Delay" : "Ready");
+
+            RuntimeState.EnemyOrder.Add(new CombatTimelineEntryRuntime
+            {
+                TimelineIndex = i,
+                Side = CombatTimelineSide.Enemy,
+                EntryType = CombatTimelineEntryType.Intent,
+                SourceActorId = enemy.ActorId,
+                SourceSlotIndex = enemy.SlotIndex,
+                TargetActorId = -1,
+                ActionType = CombatActionType.None,
+                Cost = 0,
+                Speed = 0,
+                DisplayName = enemy.DisplayName,
+                Status = status,
+                IsCurrent = false,
+                IsSkipped = isSkipped,
+                IsDelayed = isDelayed,
+                IsDead = false
+            });
+        }
+
+        CombatTimelineEntrySnapshot[] snapshots = BuildTimelineSnapshotArray();
+        EventBus.Instance.Publish(new CombatEnemyOrderChangedEvent(snapshots, CreateSnapshot()));
+        EventBus.Instance.Publish(new CombatTimelinePreviewChangedEvent(snapshots, CreateSnapshot()));
+        Debug.Log($"[Combat] EnemyOrderChanged | {reason} | Count:{snapshots.Length}");
+    }
+
+    private static int CompareEnemyOrder(CombatActorRuntime a, CombatActorRuntime b)
+    {
+        int compareValue = a.CurrentActionValue.CompareTo(b.CurrentActionValue);
+        if (compareValue != 0)
+        {
+            return compareValue;
+        }
+
+        return a.SlotIndex.CompareTo(b.SlotIndex);
+    }
+
+    private void PublishEnemyEntryEvent(CombatTimelineEntryRuntime entry, string message)
+    {
+        CombatTimelineEntrySnapshot snapshot = ToTimelineSnapshot(entry, message);
+        EventBus.Instance.Publish(new CombatEnemyOrderEntryResolvedEvent(snapshot, message, CreateSnapshot()));
+    }
+
+    private void PublishEnemyEntryResolved(CombatTimelineEntryRuntime entry, bool succeeded, string message)
+    {
+        CombatTimelineEntrySnapshot snapshot = ToTimelineSnapshot(entry, message);
+        EventBus.Instance.Publish(new CombatEnemyOrderEntryResolvedEvent(snapshot, message, CreateSnapshot()));
+        EventBus.Instance.Publish(new CombatTimelineEntryResolvedEvent(snapshot, succeeded, message, CreateSnapshot()));
+    }
+
+    private void EvaluateCombatEnd()
+    {
+        bool enemyDead = RuntimeState.CountAliveEnemies() <= 0;
+        bool allyDead = RuntimeState.CountAliveAllies() <= 0;
+        if (!enemyDead && !allyDead)
         {
             return;
         }
 
         RuntimeState.IsCombatEnded = true;
         RuntimeState.TurnState = CombatTurnState.Ended;
-        EventBus.Instance.Publish(new CombatEndedEvent(playerWon, CreateSnapshot()));
-        Debug.Log($"[Combat] Combat Ended: {(playerWon ? "Victory" : "Defeat")}");
-        PublishStateDebugLog();
+        EventBus.Instance.Publish(new CombatEndedEvent(enemyDead && !allyDead, CreateSnapshot()));
+        Debug.Log($"[Combat] CombatEnded | PlayerWon:{enemyDead && !allyDead}");
     }
 
-    private void PublishStateDebugLog()
+    private bool RequiresEnemyTarget(CombatActionDataSO actionData)
     {
-        if (RuntimeState == null || RuntimeState.Player == null || RuntimeState.Enemy == null)
-        {
-            return;
-        }
-
-        Debug.Log($"[Combat] HP Changed - Player:{RuntimeState.Player.CurrentHp}/{RuntimeState.Player.MaxHp}, Enemy:{RuntimeState.Enemy.CurrentHp}/{RuntimeState.Enemy.MaxHp}");
-        Debug.Log($"[Combat] Sand State - Total:{RuntimeState.TotalSand} Upper:{RuntimeState.UpperSand} Lower:{RuntimeState.LowerSand} Locked:{RuntimeState.LockedSand}");
-        Debug.Log($"[Combat] State - TurnIndex:{RuntimeState.TurnIndex} TurnState:{RuntimeState.TurnState} PlayerGuard:{RuntimeState.Player.GuardValue} EnemyThreat:{RuntimeState.Enemy.EnemyThreat}/{RuntimeState.ThreatCap} EnemyGuard:{RuntimeState.Enemy.EnemyGuard}/{RuntimeState.Enemy.MaxEnemyGuard} EnemyGroggyPending:{RuntimeState.Enemy.GroggyPending} EnemyGroggyActive:{RuntimeState.Enemy.GroggyActive}");
-        ValidateRuntimeInvariants();
+        return actionData != null && actionData.targetType == CombatTargetType.SingleEnemy && !actionData.isAreaAction;
     }
 
-    private void ValidateRuntimeInvariants()
+    private int FindFirstQueuedCommandIndex(int actorId)
     {
-        if (RuntimeState == null || RuntimeState.Player == null || RuntimeState.Enemy == null)
+        for (int i = 0; i < RuntimeState.QueuedCommands.Count; i++)
         {
-            return;
-        }
-
-        if (RuntimeState.UpperSand < 0 || RuntimeState.LowerSand < 0 || RuntimeState.LockedSand < 0)
-        {
-            Debug.LogWarning("[Combat] Invariant warning: Sand bucket value below zero detected.");
-        }
-
-        int total = RuntimeState.TotalSand;
-        int sum = RuntimeState.UpperSand + RuntimeState.LowerSand + RuntimeState.LockedSand;
-        if (sum != total)
-        {
-            Debug.LogWarning($"[Combat] Invariant warning: Upper+Lower+Locked({sum}) != Total({total}).");
-        }
-
-        if (RuntimeState.Player.AvailableSand < 0 || RuntimeState.Enemy.AvailableSand < 0)
-        {
-            Debug.LogWarning("[Combat] Invariant warning: AvailableSand < 0 detected.");
-        }
-
-        if (RuntimeState.Enemy.EnemyThreat > RuntimeState.ThreatCap)
-        {
-            Debug.LogWarning("[Combat] Invariant warning: EnemyThreat > ThreatCap detected.");
-        }
-
-        if (RuntimeState.Enemy.EnemyGuard < 0)
-        {
-            Debug.LogWarning("[Combat] Invariant warning: EnemyGuard < 0 detected.");
-        }
-    }
-
-    private CombatActionDataSO GetActionData(CombatActionType actionType)
-    {
-        _actionDataByType.TryGetValue(actionType, out CombatActionDataSO data);
-        return data;
-    }
-
-    private bool ValidateAndBuildActionData()
-    {
-        if (_config == null || _playerData == null || _enemyData == null || _actionDatas == null)
-        {
-            Debug.LogError("[Combat] Missing required SO references.", this);
-            return false;
-        }
-
-        _actionDataByType.Clear();
-        for (int i = 0; i < _actionDatas.Length; i++)
-        {
-            CombatActionDataSO data = _actionDatas[i];
-            if (data == null)
+            if (RuntimeState.QueuedCommands[i].SourceActorId == actorId)
             {
+                return i;
+            }
+        }
+
+        return -1;
+    }
+
+    private int CountQueuedCommandsForActor(int actorId)
+    {
+        int count = 0;
+        for (int i = 0; i < RuntimeState.QueuedCommands.Count; i++)
+        {
+            if (RuntimeState.QueuedCommands[i].SourceActorId == actorId)
+            {
+                count += 1;
+            }
+        }
+
+        return count;
+    }
+
+    private int GetFirstQueuedCostForActor(int actorId)
+    {
+        for (int i = 0; i < RuntimeState.QueuedCommands.Count; i++)
+        {
+            if (RuntimeState.QueuedCommands[i].SourceActorId == actorId)
+            {
+                return RuntimeState.QueuedCommands[i].Cost;
+            }
+        }
+
+        return 0;
+    }
+
+    private int FindNextAliveEnemySlot(int from)
+    {
+        int count = RuntimeState.Enemies.Count;
+        for (int i = 1; i <= count; i++)
+        {
+            int slot = (from + i) % count;
+            CombatActorRuntime actor = RuntimeState.Enemies[slot];
+            if (actor != null && !actor.IsDead)
+            {
+                return slot;
+            }
+        }
+
+        return Mathf.Clamp(from, 0, Mathf.Max(0, count - 1));
+    }
+
+    private void EnsureSelectionsAreAlive()
+    {
+        if (RuntimeState.Allies.Count > 0)
+        {
+            int slot = RuntimeState.SelectedAllySlot;
+            if (slot < 0 || slot >= RuntimeState.Allies.Count || RuntimeState.Allies[slot] == null || RuntimeState.Allies[slot].IsDead)
+            {
+                RuntimeState.SelectedAllySlot = FindFirstAliveSlot(RuntimeState.Allies);
+            }
+        }
+
+        if (RuntimeState.Enemies.Count > 0)
+        {
+            int slot = RuntimeState.SelectedEnemySlot;
+            if (slot < 0 || slot >= RuntimeState.Enemies.Count || RuntimeState.Enemies[slot] == null || RuntimeState.Enemies[slot].IsDead)
+            {
+                RuntimeState.SelectedEnemySlot = FindFirstAliveSlot(RuntimeState.Enemies);
+            }
+        }
+    }
+
+    private static int FindFirstAliveSlot(List<CombatActorRuntime> actors)
+    {
+        for (int i = 0; i < actors.Count; i++)
+        {
+            if (actors[i] != null && !actors[i].IsDead)
+            {
+                return i;
+            }
+        }
+
+        return 0;
+    }
+
+    private void PublishActorSelected(CombatActorType teamType, int slotIndex)
+    {
+        int actorId = -1;
+        if (teamType == CombatActorType.Ally && slotIndex >= 0 && slotIndex < RuntimeState.Allies.Count)
+        {
+            actorId = RuntimeState.Allies[slotIndex] != null ? RuntimeState.Allies[slotIndex].ActorId : -1;
+        }
+        else if (teamType == CombatActorType.Enemy && slotIndex >= 0 && slotIndex < RuntimeState.Enemies.Count)
+        {
+            actorId = RuntimeState.Enemies[slotIndex] != null ? RuntimeState.Enemies[slotIndex].ActorId : -1;
+        }
+
+        EventBus.Instance.Publish(new CombatActorSelectedEvent(teamType, slotIndex, actorId, CreateSnapshot()));
+    }
+
+    private CombatLogSnapshot CreateSnapshot()
+    {
+        return new CombatLogSnapshot(
+            RuntimeState != null ? RuntimeState.TurnIndex : 0,
+            RuntimeState != null ? RuntimeState.TurnState : CombatTurnState.None,
+            RuntimeState != null ? RuntimeState.UpperSand : 0,
+            RuntimeState != null ? RuntimeState.LowerSand : 0,
+            RuntimeState != null ? RuntimeState.PlayerSpend : 0,
+            RuntimeState != null ? RuntimeState.EnemySand : 0,
+            RuntimeState != null ? RuntimeState.MinimumFall : 0,
+            RuntimeState != null ? RuntimeState.Pressure : 0,
+            RuntimeState != null ? RuntimeState.KillBonusToken : 0,
+            RuntimeState != null ? RuntimeState.SelectedAllySlot : 0,
+            RuntimeState != null ? RuntimeState.SelectedEnemySlot : 0,
+            RuntimeState != null ? BuildActorSnapshots(RuntimeState.Allies) : Array.Empty<CombatActorSnapshot>(),
+            RuntimeState != null ? BuildActorSnapshots(RuntimeState.Enemies) : Array.Empty<CombatActorSnapshot>(),
+            RuntimeState != null ? BuildIntentSnapshots(RuntimeState.EnemyIntents) : Array.Empty<CombatIntentSnapshot>(),
+            RuntimeState != null ? BuildTimelineSnapshotArray() : Array.Empty<CombatTimelineEntrySnapshot>());
+    }
+
+    private static CombatActorSnapshot[] BuildActorSnapshots(List<CombatActorRuntime> actors)
+    {
+        CombatActorSnapshot[] snapshots = new CombatActorSnapshot[actors.Count];
+        for (int i = 0; i < actors.Count; i++)
+        {
+            CombatActorRuntime actor = actors[i];
+            if (actor == null)
+            {
+                snapshots[i] = new CombatActorSnapshot(-1, "None", CombatActorType.None, i, 0, 0, 0, 0, true, false);
                 continue;
             }
 
-            if (_actionDataByType.ContainsKey(data.actionType))
+            snapshots[i] = new CombatActorSnapshot(
+                actor.ActorId,
+                actor.DisplayName,
+                actor.ActorType,
+                actor.SlotIndex,
+                actor.CurrentHp,
+                actor.MaxHp,
+                actor.GuardValue,
+                actor.MaxGuard,
+                actor.IsDead,
+                actor.BreakSkipCount > 0);
+        }
+
+        return snapshots;
+    }
+
+    private static CombatIntentSnapshot[] BuildIntentSnapshots(List<CombatIntentRuntime> intents)
+    {
+        CombatIntentSnapshot[] snapshots = new CombatIntentSnapshot[intents.Count];
+        for (int i = 0; i < intents.Count; i++)
+        {
+            snapshots[i] = ToIntentSnapshot(intents[i]);
+        }
+
+        return snapshots;
+    }
+
+    private CombatTimelineEntrySnapshot[] BuildTimelineSnapshotArray()
+    {
+        CombatTimelineEntrySnapshot[] snapshots = new CombatTimelineEntrySnapshot[RuntimeState.EnemyOrder.Count];
+        for (int i = 0; i < RuntimeState.EnemyOrder.Count; i++)
+        {
+            snapshots[i] = ToTimelineSnapshot(RuntimeState.EnemyOrder[i], RuntimeState.EnemyOrder[i].Status);
+        }
+
+        return snapshots;
+    }
+
+    private static CombatIntentSnapshot ToIntentSnapshot(CombatIntentRuntime intent)
+    {
+        return new CombatIntentSnapshot(
+            intent.SourceActorId,
+            intent.SourceSlotIndex,
+            intent.ActionType,
+            intent.TargetActorId,
+            intent.BaseCost,
+            intent.EffectiveCost,
+            intent.Speed,
+            intent.FallbackActionType);
+    }
+
+    private static CombatTimelineEntrySnapshot ToTimelineSnapshot(CombatTimelineEntryRuntime entry, string status)
+    {
+        return new CombatTimelineEntrySnapshot(
+            entry.TimelineIndex,
+            CombatTimelineSide.Enemy,
+            CombatTimelineEntryType.Intent,
+            entry.SourceActorId,
+            entry.SourceSlotIndex,
+            entry.TargetActorId,
+            entry.ActionType,
+            0,
+            0,
+            entry.DisplayName,
+            status ?? entry.Status);
+    }
+
+    private void DebugTeamStatus(string tag)
+    {
+        Debug.Log($"[Combat] {tag} | Allies:{BuildTeamStatus(RuntimeState.Allies)} | Enemies:{BuildTeamStatus(RuntimeState.Enemies)} | Upper:{RuntimeState.UpperSand} Lower:{RuntimeState.LowerSand} EnemySand:{RuntimeState.EnemySand}");
+    }
+
+    private static string BuildTeamStatus(List<CombatActorRuntime> team)
+    {
+        string value = string.Empty;
+        for (int i = 0; i < team.Count; i++)
+        {
+            CombatActorRuntime actor = team[i];
+            if (actor == null)
             {
-                Debug.LogError($"[Combat] Duplicate action data type detected: {data.actionType}", this);
-                return false;
+                value += "(null)";
+            }
+            else
+            {
+                value += $"{actor.DisplayName}(HP:{actor.CurrentHp}/{actor.MaxHp},G:{actor.GuardValue}/{actor.MaxGuard},Skip:{actor.BreakSkipCount},Dead:{actor.IsDead})";
             }
 
-            _actionDataByType[data.actionType] = data;
+            if (i < team.Count - 1)
+            {
+                value += ", ";
+            }
         }
 
-        if (!HasRequiredActionData(CombatActionType.Strike)) return false;
-        if (!HasRequiredActionData(CombatActionType.Pierce)) return false;
-        if (!HasRequiredActionData(CombatActionType.Hex)) return false;
-        if (!HasRequiredActionData(CombatActionType.Guard)) return false;
-
-        return true;
+        return value;
     }
 
-    private bool HasRequiredActionData(CombatActionType actionType)
+    private CombatActorDataSO ToActorData(int actorId, CombatActorType teamType)
     {
-        if (_actionDataByType.ContainsKey(actionType))
+        CombatActorDataSO[] pool = teamType == CombatActorType.Ally ? _config.allyPartyActors : _config.enemyPartyActors;
+        if (pool == null)
         {
-            return true;
+            return null;
         }
 
-        Debug.LogError($"[Combat] Missing required action data: {actionType}", this);
-        return false;
-    }
-
-    private CombatLogSnapshot CreateSnapshot(
-        CombatActorType actor = CombatActorType.None,
-        CombatActionType actionType = CombatActionType.None,
-        int spentSand = 0,
-        int damage = 0)
-    {
-        if (RuntimeState == null || RuntimeState.Player == null || RuntimeState.Enemy == null)
+        for (int i = 0; i < pool.Length; i++)
         {
-            return new CombatLogSnapshot(
-                0,
-                CombatTurnState.None,
-                actor,
-                actionType,
-                spentSand,
-                damage,
-                0,
-                0,
-                0,
-                0,
-                0,
-                0,
-                0,
-                0,
-                0,
-                false,
-                false);
+            if (pool[i] != null && pool[i].actorId == actorId)
+            {
+                return pool[i];
+            }
         }
 
-        return new CombatLogSnapshot(
-            RuntimeState.TurnIndex,
-            RuntimeState.TurnState,
-            actor,
-            actionType,
-            spentSand,
-            damage,
-            RuntimeState.Player.CurrentHp,
-            RuntimeState.Enemy.CurrentHp,
-            RuntimeState.Player.AvailableSand,
-            RuntimeState.Enemy.AvailableSand,
-            RuntimeState.Player.TransferredSand,
-            RuntimeState.Enemy.TransferredSand,
-            RuntimeState.Player.GuardValue,
-            RuntimeState.Enemy.EnemyThreat,
-            RuntimeState.Enemy.EnemyGuard,
-            RuntimeState.Enemy.GroggyPending,
-            RuntimeState.Enemy.GroggyActive);
+        return null;
     }
 }

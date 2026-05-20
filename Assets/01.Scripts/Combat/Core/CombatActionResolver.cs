@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using UnityEngine;
 
 /// <summary>
@@ -7,27 +8,30 @@ public readonly struct CombatActionResult
 {
     public readonly CombatActionType ActionType;
     public readonly bool Succeeded;
-    public readonly int SpentSand;
-    public readonly int DamageDealt;
+    public readonly int HpDamage;
+    public readonly int BreakDamage;
+    public readonly int HealAmount;
     public readonly bool BreakTriggered;
-    public readonly bool GroggyTriggered;
+    public readonly bool TargetKilled;
     public readonly string FailureReason;
 
     public CombatActionResult(
         CombatActionType actionType,
         bool succeeded,
-        int spentSand,
-        int damageDealt,
+        int hpDamage,
+        int breakDamage,
+        int healAmount,
         bool breakTriggered,
-        bool groggyTriggered,
+        bool targetKilled,
         string failureReason = null)
     {
         ActionType = actionType;
         Succeeded = succeeded;
-        SpentSand = spentSand;
-        DamageDealt = damageDealt;
+        HpDamage = hpDamage;
+        BreakDamage = breakDamage;
+        HealAmount = healAmount;
         BreakTriggered = breakTriggered;
-        GroggyTriggered = groggyTriggered;
+        TargetKilled = targetKilled;
         FailureReason = failureReason;
     }
 }
@@ -37,140 +41,114 @@ public readonly struct CombatActionResult
 /// </summary>
 public class CombatActionResolver
 {
-    public CombatActionResult Resolve(CombatActorRuntime source, CombatActorRuntime target, CombatActionDataSO actionData, int maxEnemyGuard, int hexThreatDelta)
+    public CombatActionResult ResolvePlayerCommand(CombatActorRuntime source, CombatActorRuntime target, CombatCommandRuntime command)
     {
-        CombatActionType actionType = actionData != null ? actionData.actionType : CombatActionType.None;
         if (source == null || target == null || source.IsDead || target.IsDead)
         {
-            return new CombatActionResult(actionType, false, 0, 0, false, false, "Invalid actor runtime or dead actor.");
+            return new CombatActionResult(command.ActionType, false, 0, 0, 0, false, false, "Invalid actor or dead target.");
         }
 
-        if (actionData == null)
-        {
-            return new CombatActionResult(actionType, false, 0, 0, false, false, "ActionData missing");
-        }
+        int previousGuard = target.GuardValue;
+        int breakDamage = target.ApplyBreakDamage(command.BreakDamage);
+        bool breakTriggered = previousGuard > 0 && target.GuardValue <= 0;
 
-        int cost = actionData.sandCost;
-        if (!source.SpendSand(cost, out string spendFailureReason))
-        {
-            return new CombatActionResult(actionType, false, 0, 0, false, false, spendFailureReason);
-        }
+        int hpDamage = target.ApplyIncomingDamage(command.HpDamage);
+        bool killed = target.IsDead;
 
-        if (actionType == CombatActionType.Strike)
-        {
-            int damage = ApplyDamage(target, actionData.baseDamage);
-            bool breakTriggered = ApplyEnemyGuardDamage(target, actionData.breakPower, maxEnemyGuard);
-            bool groggyTriggered = ApplyGroggy(target, breakTriggered);
-            return new CombatActionResult(actionType, true, cost, damage, breakTriggered, groggyTriggered);
-        }
-
-        if (actionType == CombatActionType.Pierce)
-        {
-            int damage = ApplyDamage(target, actionData.baseDamage);
-            bool breakTriggered = ApplyEnemyGuardDamage(target, actionData.breakPower, maxEnemyGuard);
-            bool groggyTriggered = ApplyGroggy(target, breakTriggered);
-            return new CombatActionResult(actionType, true, cost, damage, breakTriggered, groggyTriggered);
-        }
-
-        if (actionType == CombatActionType.Hex)
-        {
-            int damage = ApplyDamage(target, actionData.baseDamage);
-            bool breakTriggered = ApplyEnemyGuardDamage(target, actionData.breakPower, maxEnemyGuard);
-            bool groggyTriggered = ApplyGroggy(target, breakTriggered);
-            target.EnemyThreat = Mathf.Max(0, target.EnemyThreat + hexThreatDelta);
-            return new CombatActionResult(actionType, true, cost, damage, breakTriggered, groggyTriggered);
-        }
-
-        if (actionType == CombatActionType.Guard)
-        {
-            source.GuardValue += actionData.guardValue;
-            return new CombatActionResult(actionType, true, cost, 0, false, false);
-        }
-
-        return new CombatActionResult(actionType, false, 0, 0, false, false, "Unsupported action type.");
+        return new CombatActionResult(command.ActionType, true, hpDamage, breakDamage, 0, breakTriggered, killed);
     }
 
-    public static int ApplyEnemyIntentDamage(CombatActorRuntime source, CombatActorRuntime target, int damage)
+    public CombatActionResult ResolveEnemyIntentSingleTarget(CombatActorRuntime source, CombatActorRuntime target, CombatIntentRuntime intent)
     {
-        if (source == null || target == null || source.IsDead || target.IsDead || damage <= 0)
+        if (source == null || target == null || source.IsDead || target.IsDead)
+        {
+            return new CombatActionResult(intent.ActionType, false, 0, 0, 0, false, false, "Invalid actor or dead target.");
+        }
+
+        int hpDamage = target.ApplyIncomingDamage(intent.HpDamage);
+        return new CombatActionResult(intent.ActionType, true, hpDamage, 0, 0, false, target.IsDead);
+    }
+
+    public CombatActionResult ResolveEnemyIntentHealAll(CombatActorRuntime source, IList<CombatActorRuntime> team, CombatIntentRuntime intent)
+    {
+        if (source == null || source.IsDead || team == null)
+        {
+            return new CombatActionResult(intent.ActionType, false, 0, 0, 0, false, false, "Invalid heal source/team.");
+        }
+
+        int totalHeal = 0;
+        for (int i = 0; i < team.Count; i++)
+        {
+            CombatActorRuntime actor = team[i];
+            if (actor == null || actor.IsDead)
+            {
+                continue;
+            }
+
+            int before = actor.CurrentHp;
+            actor.Heal(intent.HealAmount);
+            totalHeal += Mathf.Max(0, actor.CurrentHp - before);
+        }
+
+        return new CombatActionResult(intent.ActionType, true, 0, 0, totalHeal, false, false);
+    }
+
+    public CombatActionResult ResolveEnemyIntentAoe(CombatActorRuntime source, IList<CombatActorRuntime> targets, CombatIntentRuntime intent)
+    {
+        if (source == null || source.IsDead || targets == null)
+        {
+            return new CombatActionResult(intent.ActionType, false, 0, 0, 0, false, false, "Invalid aoe source/targets.");
+        }
+
+        int totalDamage = 0;
+        for (int i = 0; i < targets.Count; i++)
+        {
+            CombatActorRuntime target = targets[i];
+            if (target == null || target.IsDead)
+            {
+                continue;
+            }
+
+            totalDamage += target.ApplyIncomingDamage(intent.HpDamage);
+        }
+
+        return new CombatActionResult(intent.ActionType, true, totalDamage, 0, 0, false, false);
+    }
+
+    public static int ApplyGuardToAllies(IList<CombatActorRuntime> allies, int guardGain)
+    {
+        if (allies == null || guardGain <= 0)
         {
             return 0;
         }
 
-        return ApplyDamage(target, damage);
+        int changedCount = 0;
+        for (int i = 0; i < allies.Count; i++)
+        {
+            CombatActorRuntime ally = allies[i];
+            if (ally == null || ally.IsDead)
+            {
+                continue;
+            }
+
+            int before = ally.GuardValue;
+            ally.AddGuard(guardGain);
+            if (ally.GuardValue != before)
+            {
+                changedCount += 1;
+            }
+        }
+
+        return changedCount;
     }
 
-    public static void ApplyEnemyRecoverGuard(CombatActorRuntime enemy, int amount)
+    public static int ApplyGuardToActor(CombatActorRuntime actor, int guardGain)
     {
-        if (enemy == null || enemy.ActorType != CombatActorType.Enemy || amount <= 0)
+        if (actor == null || actor.IsDead || guardGain <= 0)
         {
-            return;
+            return actor != null ? actor.GuardValue : 0;
         }
 
-        enemy.EnemyGuard = Mathf.Clamp(enemy.EnemyGuard + amount, 0, Mathf.Max(1, enemy.MaxEnemyGuard));
-    }
-
-    private static int ApplyDamage(CombatActorRuntime target, int rawDamage)
-    {
-        int damage = rawDamage;
-        if (target.GuardValue > 0)
-        {
-            int blocked = target.GuardValue < damage ? target.GuardValue : damage;
-            target.GuardValue -= blocked;
-            damage -= blocked;
-        }
-
-        if (damage <= 0)
-        {
-            return 0;
-        }
-
-        target.CurrentHp -= damage;
-        if (target.CurrentHp < 0)
-        {
-            target.CurrentHp = 0;
-        }
-
-        return damage;
-    }
-
-    private static bool ApplyEnemyGuardDamage(CombatActorRuntime target, int enemyGuardDamage, int maxEnemyGuard)
-    {
-        if (target == null || target.ActorType != CombatActorType.Enemy || enemyGuardDamage <= 0)
-        {
-            return false;
-        }
-
-        // Guard is already broken and waiting for groggy cycle end.
-        if (target.GroggyPending || target.GroggyActive || target.EnemyGuard <= 0)
-        {
-            return false;
-        }
-
-        int safeMaxEnemyGuard = Mathf.Max(1, maxEnemyGuard);
-        if (target.MaxEnemyGuard <= 0)
-        {
-            target.MaxEnemyGuard = safeMaxEnemyGuard;
-        }
-
-        target.EnemyGuard -= enemyGuardDamage;
-        if (target.EnemyGuard > 0)
-        {
-            return false;
-        }
-
-        target.EnemyGuard = 0;
-        return true;
-    }
-
-    private static bool ApplyGroggy(CombatActorRuntime target, bool breakTriggered)
-    {
-        if (!breakTriggered)
-        {
-            return false;
-        }
-
-        target.GroggyPending = true;
-        return true;
+        return actor.AddGuard(guardGain);
     }
 }

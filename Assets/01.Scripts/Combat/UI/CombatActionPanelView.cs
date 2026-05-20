@@ -1,42 +1,39 @@
-using TMPro;
+﻿using TMPro;
 using UnityEngine;
 using UnityEngine.EventSystems;
 using UnityEngine.UI;
 
-/// <summary>
-/// Holds inspector references for action card buttons and their text widgets.
-/// </summary>
 public class CombatActionPanelView : MonoBehaviour
 {
-    [Header("Strike")]
+    [Header("Q")]
     [SerializeField] private Button _strikeButton;
     [SerializeField] private TMP_Text _strikeNameText;
     [SerializeField] private TMP_Text _strikeCostText;
     [SerializeField] private TMP_Text _strikeEffectText;
     [SerializeField] private TMP_Text _strikeKeyText;
 
-    [Header("Pierce")]
+    [Header("W")]
     [SerializeField] private Button _pierceButton;
     [SerializeField] private TMP_Text _pierceNameText;
     [SerializeField] private TMP_Text _pierceCostText;
     [SerializeField] private TMP_Text _pierceEffectText;
     [SerializeField] private TMP_Text _pierceKeyText;
 
-    [Header("Hex")]
+    [Header("E")]
     [SerializeField] private Button _hexButton;
     [SerializeField] private TMP_Text _hexNameText;
     [SerializeField] private TMP_Text _hexCostText;
     [SerializeField] private TMP_Text _hexEffectText;
     [SerializeField] private TMP_Text _hexKeyText;
 
-    [Header("Guard")]
+    [Header("R")]
     [SerializeField] private Button _guardButton;
     [SerializeField] private TMP_Text _guardNameText;
     [SerializeField] private TMP_Text _guardCostText;
     [SerializeField] private TMP_Text _guardEffectText;
     [SerializeField] private TMP_Text _guardKeyText;
 
-    [Header("End Turn")]
+    [Header("F")]
     [SerializeField] private Button _endTurnButton;
     [SerializeField] private TMP_Text _endTurnNameText;
     [SerializeField] private TMP_Text _endTurnCostText;
@@ -69,11 +66,11 @@ public class CombatActionPanelView : MonoBehaviour
 
     public void SetStaticTexts()
     {
-        SetTexts(_strikeNameText, _strikeCostText, _strikeEffectText, "강타", "비용 3", "피해 6");
-        SetTexts(_pierceNameText, _pierceCostText, _pierceEffectText, "관통", "비용 3", "적 가드 -4");
-        SetTexts(_hexNameText, _hexCostText, _hexEffectText, "저주", "비용 3", "위협 -1");
-        SetTexts(_guardNameText, _guardCostText, _guardEffectText, "방어", "비용 2", "가드 +4");
-        SetTexts(_endTurnNameText, _endTurnCostText, _endTurnEffectText, "플립", "턴 종료", "적 +0");
+        SetTexts(_strikeNameText, _strikeCostText, _strikeEffectText, "Q Action", "-", "-");
+        SetTexts(_pierceNameText, _pierceCostText, _pierceEffectText, "W Action", "-", "-");
+        SetTexts(_hexNameText, _hexCostText, _hexEffectText, "E Action", "-", "-");
+        SetTexts(_guardNameText, _guardCostText, _guardEffectText, "Target Next", "No Cost", "R: 적 타겟 순환");
+        SetTexts(_endTurnNameText, _endTurnCostText, _endTurnEffectText, "Confirm", "F", "명령 확정/해결");
 
         SetText(_strikeKeyText, "Q");
         SetText(_pierceKeyText, "W");
@@ -82,12 +79,46 @@ public class CombatActionPanelView : MonoBehaviour
         SetText(_endTurnKeyText, "F");
     }
 
+    public void SetActionSlot(int index, string actionName, int cost, int speed, string effect, bool interactable)
+    {
+        TMP_Text nameText = null;
+        TMP_Text costText = null;
+        TMP_Text effectText = null;
+        Button button = null;
+
+        if (index == 0)
+        {
+            nameText = _strikeNameText;
+            costText = _strikeCostText;
+            effectText = _strikeEffectText;
+            button = _strikeButton;
+        }
+        else if (index == 1)
+        {
+            nameText = _pierceNameText;
+            costText = _pierceCostText;
+            effectText = _pierceEffectText;
+            button = _pierceButton;
+        }
+        else if (index == 2)
+        {
+            nameText = _hexNameText;
+            costText = _hexCostText;
+            effectText = _hexEffectText;
+            button = _hexButton;
+        }
+
+        if (nameText != null) nameText.text = actionName;
+        if (costText != null) costText.text = $"Cost {Mathf.Max(0, cost)} / Spd {Mathf.Max(0, speed)}";
+        if (effectText != null) effectText.text = effect;
+        if (button != null) button.interactable = interactable;
+    }
+
     public void SetEndTurnPreview(bool nextIsEnemy, int nextSand)
     {
         if (_endTurnEffectText != null)
         {
-            string target = nextIsEnemy ? "적" : "플레이어";
-            _endTurnEffectText.text = $"{target} +{Mathf.Max(0, nextSand)}";
+            _endTurnEffectText.text = $"Pred EnemySand: {Mathf.Max(0, nextSand)}";
         }
     }
 
