@@ -21,8 +21,8 @@ public class CombatBoardView : MonoBehaviour
             return;
         }
 
-        RefreshSide(_allySlots, state.Allies, state.SelectedAllySlot, state);
-        RefreshEnemySide(_enemySlots, state.Enemies, state.SelectedEnemySlot, state);
+        RefreshSide(_allySlots, state.Allies, state.SelectedAllySlot);
+        RefreshSide(_enemySlots, state.Enemies, state.SelectedEnemySlot);
     }
 
     private void BindSlots(CombatActorSlotView[] slots, CombatActorType teamType)
@@ -57,7 +57,7 @@ public class CombatBoardView : MonoBehaviour
         _manager.SelectEnemyBySlot(slotIndex);
     }
 
-    private static void RefreshSide(CombatActorSlotView[] slots, System.Collections.Generic.List<CombatActorRuntime> actors, int selectedSlot, CombatRuntimeState state)
+    private static void RefreshSide(CombatActorSlotView[] slots, System.Collections.Generic.List<CombatActorRuntime> actors, int selectedSlot)
     {
         if (slots == null || actors == null)
         {
@@ -67,39 +67,7 @@ public class CombatBoardView : MonoBehaviour
         for (int i = 0; i < slots.Length; i++)
         {
             CombatActorRuntime actor = i < actors.Count ? actors[i] : null;
-            slots[i]?.ApplyActor(actor, i == selectedSlot, null, true);
+            slots[i]?.ApplyActor(actor, i == selectedSlot);
         }
-    }
-
-    private static void RefreshEnemySide(CombatActorSlotView[] slots, System.Collections.Generic.List<CombatActorRuntime> actors, int selectedSlot, CombatRuntimeState state)
-    {
-        if (slots == null || actors == null || state == null)
-        {
-            return;
-        }
-
-        for (int i = 0; i < slots.Length; i++)
-        {
-            CombatActorRuntime actor = i < actors.Count ? actors[i] : null;
-            CombatIntentRuntime? intent = FindIntent(state.EnemyIntents, actor != null ? actor.ActorId : -1);
-            int predictedEnemySand = state.TurnState == CombatTurnState.PlayerCommand
-                ? Mathf.Max(state.MinimumFall, state.LowerSand + state.PlayerSpend)
-                : state.EnemySand;
-            bool affordable = !intent.HasValue || predictedEnemySand >= intent.Value.EffectiveCost;
-            slots[i]?.ApplyActor(actor, i == selectedSlot, intent, affordable);
-        }
-    }
-
-    private static CombatIntentRuntime? FindIntent(System.Collections.Generic.List<CombatIntentRuntime> intents, int actorId)
-    {
-        for (int i = 0; i < intents.Count; i++)
-        {
-            if (intents[i].SourceActorId == actorId)
-            {
-                return intents[i];
-            }
-        }
-
-        return null;
     }
 }

@@ -1,19 +1,31 @@
 using System.Collections;
 using UnityEngine;
 
+[System.Serializable]
+public class CombatWaveData
+{
+    public string waveName = "Wave";
+    public CombatActorDataSO[] enemyPartyActors = new CombatActorDataSO[3];
+}
+
 [DefaultExecutionOrder(-38)]
 public class CombatWaveController : MonoBehaviour
 {
-    [SerializeField] private CombatActorDataSO playerDataOverride;
-    [SerializeField] private CombatActorDataSO[] enemyWaveDatas;
+    [Header("Ally Party (3)")]
+    [SerializeField] private CombatActorDataSO[] allyPartyActors = new CombatActorDataSO[3];
+
+    [Header("Enemy Waves (3v3 each)")]
+    [SerializeField] private CombatWaveData[] waves;
+
+    [Header("Flow")]
     [SerializeField] private bool startOnEnable = true;
     [SerializeField] private float nextWaveDelay = 0.6f;
-    [SerializeField] private bool carryPlayerHpBetweenWaves;
+    [SerializeField] private bool carryFrontAllyHpBetweenWaves;
 
     private HourglassCombatManager _combatManager;
     private Coroutine _nextWaveRoutine;
     private int _currentWaveIndex = -1;
-    private int _carriedPlayerHp = -1;
+    private int _carriedFrontAllyHp = -1;
     private bool _isWaveRunning;
 
     private void OnEnable()
@@ -49,14 +61,14 @@ public class CombatWaveController : MonoBehaviour
             return;
         }
 
-        if (enemyWaveDatas == null || enemyWaveDatas.Length == 0)
+        if (!ValidateAllyParty() || waves == null || waves.Length == 0)
         {
-            Debug.LogError("[CombatWaveController] enemyWaveDatas is empty.", this);
+            Debug.LogError("[CombatWaveController] Wave configuration is invalid (requires 3 allies and at least one 3-enemy wave).", this);
             return;
         }
 
         _currentWaveIndex = -1;
-        _carriedPlayerHp = -1;
+        _carriedFrontAllyHp = -1;
         _isWaveRunning = true;
         StartNextWave();
     }
@@ -89,7 +101,7 @@ public class CombatWaveController : MonoBehaviour
             return;
         }
 
-        if (carryPlayerHpBetweenWaves)
+        if (carryFrontAllyHpBetweenWaves)
         {
             int carriedHp = 0;
             if (evt.Snapshot.allies != null && evt.Snapshot.allies.Length > 0)
@@ -97,7 +109,7 @@ public class CombatWaveController : MonoBehaviour
                 carriedHp = evt.Snapshot.allies[0].hp;
             }
 
-            _carriedPlayerHp = Mathf.Max(0, carriedHp);
+            _carriedFrontAllyHp = Mathf.Max(0, carriedHp);
         }
 
         if (_nextWaveRoutine != null)
@@ -130,29 +142,67 @@ public class CombatWaveController : MonoBehaviour
         }
 
         int nextWaveIndex = _currentWaveIndex + 1;
-        if (enemyWaveDatas == null || nextWaveIndex >= enemyWaveDatas.Length)
+        if (waves == null || nextWaveIndex >= waves.Length)
         {
             _isWaveRunning = false;
             Debug.Log("[CombatWaveController] All waves cleared.");
             return;
         }
 
-        CombatActorDataSO waveEnemyData = enemyWaveDatas[nextWaveIndex];
-        if (waveEnemyData == null)
+        CombatWaveData wave = waves[nextWaveIndex];
+        if (!ValidateWave(wave, nextWaveIndex))
         {
-            Debug.LogError($"[CombatWaveController] enemyWaveDatas[{nextWaveIndex}] is null.", this);
             _isWaveRunning = false;
             return;
         }
 
         _currentWaveIndex = nextWaveIndex;
-        _combatManager.ConfigureCombatActors(playerDataOverride, waveEnemyData);
-        if (carryPlayerHpBetweenWaves && _carriedPlayerHp >= 0)
+        _combatManager.ConfigureCombatParties(allyPartyActors, wave.enemyPartyActors);
+        if (carryFrontAllyHpBetweenWaves && _carriedFrontAllyHp >= 0)
         {
-            _combatManager.SetNextCombatPlayerStartHpOverride(_carriedPlayerHp);
+            _combatManager.SetNextCombatPlayerStartHpOverride(_carriedFrontAllyHp);
         }
 
         _combatManager.StartCombat();
+    }
+
+    private bool ValidateAllyParty()
+    {
+        if (allyPartyActors == null || allyPartyActors.Length < 3)
+        {
+            return false;
+        }
+
+        for (int i = 0; i < 3; i++)
+        {
+            if (allyPartyActors[i] == null)
+            {
+                Debug.LogError($"[CombatWaveController] allyPartyActors[{i}] is null.", this);
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private bool ValidateWave(CombatWaveData wave, int index)
+    {
+        if (wave == null || wave.enemyPartyActors == null || wave.enemyPartyActors.Length < 3)
+        {
+            Debug.LogError($"[CombatWaveController] waves[{index}] is invalid (needs 3 enemy actors).", this);
+            return false;
+        }
+
+        for (int i = 0; i < 3; i++)
+        {
+            if (wave.enemyPartyActors[i] == null)
+            {
+                Debug.LogError($"[CombatWaveController] waves[{index}].enemyPartyActors[{i}] is null.", this);
+                return false;
+            }
+        }
+
+        return true;
     }
 
     private void CacheCombatManager()

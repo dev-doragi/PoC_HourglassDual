@@ -6,6 +6,7 @@ using System.Collections.Generic;
 /// </summary>
 public class CombatActorRuntime
 {
+    public CombatActorDataSO SourceData;
     public int ActorId;
     public int SlotIndex;
     public string DisplayName;
@@ -106,6 +107,7 @@ public class CombatActorRuntime
 
         CombatActorRuntime runtime = new CombatActorRuntime
         {
+            SourceData = data,
             ActorId = data.actorId,
             SlotIndex = Mathf.Max(0, data.slotIndex >= 0 ? data.slotIndex : fallbackSlotIndex),
             DisplayName = string.IsNullOrWhiteSpace(data.displayName) ? data.name : data.displayName,

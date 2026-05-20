@@ -188,8 +188,34 @@ public class InputReader : Singleton<InputReader>
     private static void OnMoveCanceled(InputAction.CallbackContext ctx) => EventBus.Instance.Publish(new MoveInputEvent { Value = Vector2.zero });
     private static void OnLookPerformed(InputAction.CallbackContext ctx) => EventBus.Instance.Publish(new LookInputEvent { Value = ctx.ReadValue<Vector2>() });
     private static void OnLookCanceled(InputAction.CallbackContext ctx) => EventBus.Instance.Publish(new LookInputEvent { Value = Vector2.zero });
-    private static void OnPrimaryStarted(InputAction.CallbackContext _) => EventBus.Instance.Publish(new PrimaryActionInputEvent { IsPressed = true });
-    private static void OnPrimaryCanceled(InputAction.CallbackContext _) => EventBus.Instance.Publish(new PrimaryActionInputEvent { IsPressed = false });
+    private static void OnPrimaryStarted(InputAction.CallbackContext _)
+    {
+        Vector2 screenPosition = Vector2.zero;
+        bool hasScreenPosition = false;
+
+        if (Pointer.current != null)
+        {
+            screenPosition = Pointer.current.position.ReadValue();
+            hasScreenPosition = true;
+        }
+
+        EventBus.Instance.Publish(new PrimaryActionInputEvent
+        {
+            IsPressed = true,
+            HasScreenPosition = hasScreenPosition,
+            ScreenPosition = screenPosition
+        });
+    }
+
+    private static void OnPrimaryCanceled(InputAction.CallbackContext _)
+    {
+        EventBus.Instance.Publish(new PrimaryActionInputEvent
+        {
+            IsPressed = false,
+            HasScreenPosition = false,
+            ScreenPosition = Vector2.zero
+        });
+    }
     private static void OnSecondaryStarted(InputAction.CallbackContext _) => EventBus.Instance.Publish(new SecondaryActionInputEvent { IsPressed = true });
     private static void OnSecondaryCanceled(InputAction.CallbackContext _) => EventBus.Instance.Publish(new SecondaryActionInputEvent { IsPressed = false });
     private static void OnSubmit(InputAction.CallbackContext _) => EventBus.Instance.Publish(new SubmitInputEvent());

@@ -46,13 +46,17 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::HourglassCombatManager
   _isDontDestroyOnLoad: 0
   _config: {fileID: 11400000, guid: 6dbfb59b33a299f43a34295f4c368f2e, type: 2}
-  _playerData: {fileID: 11400000, guid: fd9c6dbb1489f89478ce5fe08b9ad3b1, type: 2}
-  _enemyData: {fileID: 11400000, guid: 3a094dd341691cb4da8c6fd0f2563688, type: 2}
-  _actionDatas:
-  - {fileID: 11400000, guid: 37099ecb2e61fb94dac67478513c5364, type: 2}
-  - {fileID: 11400000, guid: 51d81acf9f461704083f537ef964f6a1, type: 2}
-  - {fileID: 11400000, guid: f9ebea6e26b040a4abfd20c65fad073f, type: 2}
-  - {fileID: 11400000, guid: fac415ab47a70f4479fb42b5b5d2d8da, type: 2}
-  - {fileID: 11400000, guid: 54f15e06a0b2b2740a58ea5a3af302a1, type: 2}
-  - {fileID: 11400000, guid: f5c4c2cbc4cbde84d91e0e7554ba8c97, type: 2}
-  - {fileID: 11400000, guid: a8e310055504d824188a4521208c90be, type: 2}
+  _globalActionCatalog:
+  - {fileID: 11400000, guid: db3215e7c42e4c4982cf4afb19332462, type: 2}
+  - {fileID: 11400000, guid: 0720919d7e6c4ddc8d457c00235a81af, type: 2}
+  - {fileID: 11400000, guid: caf10240fa2d4436a49f860dcfdca42b, type: 2}
+  - {fileID: 11400000, guid: 8cb90c9ed15a49d1ae4193a7b2db28dd, type: 2}
+  - {fileID: 11400000, guid: 5e9539a2b46844f0bb3a87b5689f7915, type: 2}
+  - {fileID: 11400000, guid: 1ea1530d907440b3a30f1ddbfa47661a, type: 2}
+  - {fileID: 11400000, guid: b318c9faa54a4d35899651e3ec5c6f5c, type: 2}
+  - {fileID: 11400000, guid: 0ea6cb1768ec4e40b272526602e64af6, type: 2}
+  - {fileID: 11400000, guid: 60eb22ca173f4190a84a629c5df132c2, type: 2}
+  - {fileID: 11400000, guid: f9c2c0086f934586a4f434cef55975ff, type: 2}
+  - {fileID: 11400000, guid: c39b12e6701645e480c72a32a829aeb3, type: 2}
+  - {fileID: 11400000, guid: ea9863208806404eb212ced87441d69b, type: 2}
+  _flipDuration: 0.45

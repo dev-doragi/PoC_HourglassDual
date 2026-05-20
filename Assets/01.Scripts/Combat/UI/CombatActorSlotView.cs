@@ -1,32 +1,55 @@
 using System;
 using TMPro;
 using UnityEngine;
+using UnityEngine.EventSystems;
 using UnityEngine.UI;
 
 public class CombatActorSlotView : MonoBehaviour
 {
-    [SerializeField] private Button _selectButton;
-    [SerializeField] private Image _selectionBorder;
-    [SerializeField] private TMP_Text _nameText;
-    [SerializeField] private TMP_Text _hpText;
-    [SerializeField] private TMP_Text _guardText;
-    [SerializeField] private TMP_Text _intentText;
+    private static readonly int OutlineEnabledId = Shader.PropertyToID("_OutlineEnabled");
+    private static readonly int OutlineColorId = Shader.PropertyToID("_OutlineColor");
+    private static readonly int OutlineSizeId = Shader.PropertyToID("_OutlineSize");
+
+    [SerializeField] private SpriteRenderer _spriteRenderer;
+    [SerializeField] private Collider2D _clickCollider;
     [SerializeField] private Slider _hpBar;
     [SerializeField] private Slider _guardBar;
-    [SerializeField] private Color _selectedColor = new Color(1f, 0.9f, 0.2f, 1f);
-    [SerializeField] private Color _normalColor = Color.white;
+    [SerializeField] private TMP_Text _groggyText;
+
+    [Header("Outline")]
+    [SerializeField] private Color _selectedOutlineColor = new Color(1f, 0.92f, 0.25f, 1f);
+    [SerializeField] private float _selectedOutlineSize = 1.5f;
 
     private CombatActorType _teamType;
     private int _slotIndex;
     private Action<CombatActorType, int> _onSelect;
+    private MaterialPropertyBlock _propertyBlock;
+    private bool _clickable;
 
     private void Awake()
     {
-        if (_selectButton != null)
+        if (_spriteRenderer == null)
         {
-            _selectButton.onClick.RemoveAllListeners();
-            _selectButton.onClick.AddListener(OnClickSelect);
+            _spriteRenderer = GetComponentInChildren<SpriteRenderer>();
         }
+
+        if (_clickCollider == null && _spriteRenderer != null)
+        {
+            _clickCollider = _spriteRenderer.GetComponent<Collider2D>();
+        }
+
+        _propertyBlock = new MaterialPropertyBlock();
+        SetSelected(false);
+    }
+
+    private void OnEnable()
+    {
+        EventBus.Instance.Subscribe<PrimaryActionInputEvent>(OnPrimaryActionInput);
+    }
+
+    private void OnDisable()
+    {
+        EventBus.Instance.Unsubscribe<PrimaryActionInputEvent>(OnPrimaryActionInput);
     }
 
     public void Bind(CombatActorType teamType, int slotIndex, Action<CombatActorType, int> onSelect)
@@ -36,35 +59,40 @@ public class CombatActorSlotView : MonoBehaviour
         _onSelect = onSelect;
     }
 
-    public void ApplyActor(CombatActorRuntime actor, bool selected, CombatIntentRuntime? intent, bool intentAffordable)
+    public void ApplyActor(CombatActorRuntime actor, bool selected)
     {
-        if (_selectionBorder != null)
-        {
-            _selectionBorder.color = selected ? _selectedColor : _normalColor;
-        }
-
         if (actor == null)
         {
-            SetTexts("-", "HP -", "G -");
-            SetIntent("-");
             SetBars(0, 1, 0, 1);
+            SetGroggy(false, string.Empty);
+            SetSelected(false);
+            SetClickable(false);
             return;
         }
 
-        SetTexts(actor.DisplayName, $"HP {actor.CurrentHp}/{Mathf.Max(1, actor.MaxHp)}", $"G {actor.GuardValue}/{Mathf.Max(0, actor.MaxGuard)}");
-        SetBars(actor.CurrentHp, Mathf.Max(1, actor.MaxHp), actor.GuardValue, Mathf.Max(1, actor.MaxGuard));
+        int hpMax = Mathf.Max(1, actor.MaxHp);
+        int guardMax = Mathf.Max(1, actor.MaxGuard);
+        SetBars(actor.CurrentHp, hpMax, actor.GuardValue, guardMax);
+        bool showGroggy = actor.BreakSkipCount > 0 || actor.IsBroken;
+        SetGroggy(showGroggy, showGroggy ? "GROGGY" : string.Empty);
 
-        if (intent.HasValue)
+        bool selectable = !actor.IsDead;
+        SetClickable(selectable);
+        SetSelected(selectable && selected);
+    }
+
+    public void SetSelected(bool selected)
+    {
+        if (_spriteRenderer == null)
         {
-            CombatIntentRuntime intentValue = intent.Value;
-            string skipMark = actor.BreakSkipCount > 0 ? " X" : string.Empty;
-            string affordability = intentAffordable ? "Ready" : "NotEnoughSand";
-            SetIntent($"{intentValue.DisplayName} c{intentValue.EffectiveCost} {affordability}{skipMark}");
+            return;
         }
-        else
-        {
-            SetIntent(actor.BreakSkipCount > 0 ? "Skip X" : "-");
-        }
+
+        _spriteRenderer.GetPropertyBlock(_propertyBlock);
+        _propertyBlock.SetFloat(OutlineEnabledId, selected ? 1f : 0f);
+        _propertyBlock.SetColor(OutlineColorId, _selectedOutlineColor);
+        _propertyBlock.SetFloat(OutlineSizeId, selected ? Mathf.Max(0f, _selectedOutlineSize) : 0f);
+        _spriteRenderer.SetPropertyBlock(_propertyBlock);
     }
 
     private void OnClickSelect()
@@ -72,18 +100,29 @@ public class CombatActorSlotView : MonoBehaviour
         _onSelect?.Invoke(_teamType, _slotIndex);
     }
 
-    private void SetTexts(string name, string hp, string guard)
+    private void OnPrimaryActionInput(PrimaryActionInputEvent evt)
     {
-        if (_nameText != null) _nameText.text = name;
-        if (_hpText != null) _hpText.text = hp;
-        if (_guardText != null) _guardText.text = guard;
-    }
-
-    private void SetIntent(string value)
-    {
-        if (_intentText != null)
+        if (!evt.IsPressed || !_clickable || _clickCollider == null || !evt.HasScreenPosition)
         {
-            _intentText.text = value;
+            return;
+        }
+
+        if (EventSystem.current != null && EventSystem.current.IsPointerOverGameObject())
+        {
+            return;
+        }
+
+        Camera cam = Camera.main;
+        if (cam == null)
+        {
+            return;
+        }
+
+        Vector3 world = cam.ScreenToWorldPoint(evt.ScreenPosition);
+        Vector2 point = new Vector2(world.x, world.y);
+        if (_clickCollider.OverlapPoint(point))
+        {
+            OnClickSelect();
         }
     }
 
@@ -103,6 +142,26 @@ public class CombatActorSlotView : MonoBehaviour
             _guardBar.maxValue = Mathf.Max(1, guardMax);
             _guardBar.value = Mathf.Clamp(guard, 0, guardMax);
             _guardBar.interactable = false;
+        }
+    }
+
+    private void SetGroggy(bool active, string label)
+    {
+        if (_groggyText == null)
+        {
+            return;
+        }
+
+        _groggyText.gameObject.SetActive(active);
+        _groggyText.text = label;
+    }
+
+    private void SetClickable(bool clickable)
+    {
+        _clickable = clickable;
+        if (_clickCollider != null)
+        {
+            _clickCollider.enabled = clickable;
         }
     }
 }

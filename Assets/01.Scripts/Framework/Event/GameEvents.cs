@@ -90,6 +90,8 @@ public struct CombatEndTurnInputEvent { }
 public struct PrimaryActionInputEvent
 {
     public bool IsPressed;
+    public bool HasScreenPosition;
+    public Vector2 ScreenPosition;
 }
 
 public struct SecondaryActionInputEvent

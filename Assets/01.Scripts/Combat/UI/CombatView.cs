@@ -4,18 +4,17 @@ using UnityEngine;
 [DefaultExecutionOrder(-39)]
 public class CombatView : MonoBehaviour
 {
-    [SerializeField] private Transform playerPivot;
-    [SerializeField] private Transform enemyPivot;
-    [SerializeField] private SpriteRenderer playerSpriteRenderer;
-    [SerializeField] private SpriteRenderer enemySpriteRenderer;
+    [Header("3v3 Pivots (slot index order)")]
+    [SerializeField] private Transform[] allyPivots = new Transform[3];
+    [SerializeField] private Transform[] enemyPivots = new Transform[3];
+    [SerializeField] private SpriteRenderer[] allyRenderers = new SpriteRenderer[3];
+    [SerializeField] private SpriteRenderer[] enemyRenderers = new SpriteRenderer[3];
 
     private HourglassCombatManager _combatManager;
-    private CombatActorDataSO _playerData;
-    private CombatActorDataSO _enemyData;
-    private Vector3 _playerInitialLocalPosition;
-    private Vector3 _enemyInitialLocalPosition;
-    private Sequence _playerSequence;
-    private Sequence _enemySequence;
+    private readonly Vector3[] _allyInitialLocalPositions = new Vector3[3];
+    private readonly Vector3[] _enemyInitialLocalPositions = new Vector3[3];
+    private readonly Sequence[] _allySequences = new Sequence[3];
+    private readonly Sequence[] _enemySequences = new Sequence[3];
 
     private void Awake()
     {
@@ -25,89 +24,60 @@ public class CombatView : MonoBehaviour
     private void OnEnable()
     {
         EventBus.Instance.Subscribe<CombatRoundStartedEvent>(OnCombatRoundStarted);
-        EventBus.Instance.Subscribe<CombatTimelineEntryResolvedEvent>(OnCombatTimelineEntryResolved);
+        EventBus.Instance.Subscribe<CombatAllyCommandResolvedEvent>(OnCombatAllyCommandResolved);
+        EventBus.Instance.Subscribe<CombatEnemyOrderEntryResolvedEvent>(OnCombatEnemyOrderEntryResolved);
         EventBus.Instance.Subscribe<CombatActorDamagedEvent>(OnCombatActorDamaged);
         EventBus.Instance.Subscribe<CombatActorKilledEvent>(OnCombatActorKilled);
-        EventBus.Instance.Subscribe<CombatEndedEvent>(OnCombatEnded);
     }
 
     private void Start()
     {
         CacheCombatManager();
-        CacheActorData();
+        InitializeAllActors();
     }
 
     private void OnDisable()
     {
         EventBus.Instance.Unsubscribe<CombatRoundStartedEvent>(OnCombatRoundStarted);
-        EventBus.Instance.Unsubscribe<CombatTimelineEntryResolvedEvent>(OnCombatTimelineEntryResolved);
+        EventBus.Instance.Unsubscribe<CombatAllyCommandResolvedEvent>(OnCombatAllyCommandResolved);
+        EventBus.Instance.Unsubscribe<CombatEnemyOrderEntryResolvedEvent>(OnCombatEnemyOrderEntryResolved);
         EventBus.Instance.Unsubscribe<CombatActorDamagedEvent>(OnCombatActorDamaged);
         EventBus.Instance.Unsubscribe<CombatActorKilledEvent>(OnCombatActorKilled);
-        EventBus.Instance.Unsubscribe<CombatEndedEvent>(OnCombatEnded);
         KillAllSequences();
     }
 
     private void OnCombatRoundStarted(CombatRoundStartedEvent evt)
     {
         CacheCombatManager();
-        CacheActorData();
-        InitializeActorVisual(CombatActorType.Ally);
-        InitializeActorVisual(CombatActorType.Enemy);
+        InitializeAllActors();
     }
 
-    private void OnCombatTimelineEntryResolved(CombatTimelineEntryResolvedEvent evt)
+    private void OnCombatAllyCommandResolved(CombatAllyCommandResolvedEvent evt)
     {
         if (!evt.Succeeded)
         {
             return;
         }
 
-        if (evt.Entry.side == CombatTimelineSide.Ally)
+        PlayAttackSequence(evt.Command.SourceActorId);
+    }
+
+    private void OnCombatEnemyOrderEntryResolved(CombatEnemyOrderEntryResolvedEvent evt)
+    {
+        if (evt.Message == "EnemyOrderEntryStarted")
         {
-            PlayAttackSequence(CombatActorType.Ally);
-        }
-        else
-        {
-            PlayAttackSequence(CombatActorType.Enemy);
+            PlayAttackSequence(evt.Entry.source_actor_id);
         }
     }
 
     private void OnCombatActorDamaged(CombatActorDamagedEvent evt)
     {
-        CombatActorType side = ResolveActorType(evt.Snapshot, evt.ActorId);
-        if (side == CombatActorType.Ally)
-        {
-            PlayHitSequence(CombatActorType.Ally, IsAlliesWiped(evt.Snapshot));
-        }
-        else if (side == CombatActorType.Enemy)
-        {
-            PlayHitSequence(CombatActorType.Enemy, IsEnemiesWiped(evt.Snapshot));
-        }
+        PlayHitSequence(evt.ActorId);
     }
 
     private void OnCombatActorKilled(CombatActorKilledEvent evt)
     {
-        CombatActorType side = ResolveActorType(evt.Snapshot, evt.ActorId);
-        if (side == CombatActorType.Ally && IsAlliesWiped(evt.Snapshot))
-        {
-            PlayDeathSequence(CombatActorType.Ally);
-        }
-        else if (side == CombatActorType.Enemy && IsEnemiesWiped(evt.Snapshot))
-        {
-            PlayDeathSequence(CombatActorType.Enemy);
-        }
-    }
-
-    private void OnCombatEnded(CombatEndedEvent evt)
-    {
-        if (evt.PlayerWon)
-        {
-            PlayDeathSequence(CombatActorType.Enemy);
-        }
-        else
-        {
-            PlayDeathSequence(CombatActorType.Ally);
-        }
+        PlayDeathSequence(evt.ActorId);
     }
 
     private void CacheCombatManager()
@@ -120,142 +90,182 @@ public class CombatView : MonoBehaviour
         _combatManager = HourglassCombatManager.Instance;
     }
 
-    private void CacheActorData()
+    private void CacheInitialLocalPositions()
     {
-        if (_combatManager == null)
+        for (int i = 0; i < 3; i++)
+        {
+            Transform allyPivot = GetPivot(CombatActorType.Ally, i);
+            Transform enemyPivotAtSlot = GetPivot(CombatActorType.Enemy, i);
+            _allyInitialLocalPositions[i] = allyPivot != null ? allyPivot.localPosition : Vector3.zero;
+            _enemyInitialLocalPositions[i] = enemyPivotAtSlot != null ? enemyPivotAtSlot.localPosition : Vector3.zero;
+        }
+    }
+
+    private void InitializeAllActors()
+    {
+        if (_combatManager == null || _combatManager.RuntimeState == null)
         {
             return;
         }
 
-        _playerData = _combatManager.PlayerData;
-        _enemyData = _combatManager.EnemyData;
+        InitializeTeam(_combatManager.RuntimeState.Allies, CombatActorType.Ally);
+        InitializeTeam(_combatManager.RuntimeState.Enemies, CombatActorType.Enemy);
     }
 
-    private void CacheInitialLocalPositions()
+    private void InitializeTeam(System.Collections.Generic.List<CombatActorRuntime> actors, CombatActorType actorType)
     {
-        _playerInitialLocalPosition = playerPivot != null ? playerPivot.localPosition : Vector3.zero;
-        _enemyInitialLocalPosition = enemyPivot != null ? enemyPivot.localPosition : Vector3.zero;
-    }
-
-    private void InitializeActorVisual(CombatActorType actorType)
-    {
-        Transform pivot = GetPivot(actorType);
-        SpriteRenderer renderer = GetRenderer(actorType);
-        CombatActorDataSO data = GetActorData(actorType);
-        Vector3 initialLocalPosition = GetInitialLocalPosition(actorType);
-
-        if (renderer != null)
+        for (int slot = 0; slot < 3; slot++)
         {
-            renderer.gameObject.SetActive(true);
-            SetRendererAlpha(renderer, 1f);
+            CombatActorRuntime actor = (actors != null && slot < actors.Count) ? actors[slot] : null;
+            InitializeSlotVisual(actorType, slot, actor);
         }
+    }
 
+    private void InitializeSlotVisual(CombatActorType actorType, int slotIndex, CombatActorRuntime actor)
+    {
+        Transform pivot = GetPivot(actorType, slotIndex);
+        SpriteRenderer renderer = GetRenderer(actorType, slotIndex);
         if (pivot != null)
         {
-            pivot.localPosition = initialLocalPosition;
+            pivot.localPosition = GetInitialLocalPosition(actorType, slotIndex);
         }
 
-        if (renderer != null && data != null && data.idleSprite != null)
+        if (renderer == null)
+        {
+            return;
+        }
+
+        if (actor == null)
+        {
+            renderer.gameObject.SetActive(false);
+            return;
+        }
+
+        renderer.gameObject.SetActive(true);
+        SetRendererAlpha(renderer, 1f);
+        CombatActorDataSO data = actor.SourceData;
+        if (data != null && data.idleSprite != null)
         {
             renderer.sprite = data.idleSprite;
         }
     }
 
-    private void PlayAttackSequence(CombatActorType actorType)
+    private void PlayAttackSequence(int actorId)
     {
-        Transform pivot = GetPivot(actorType);
-        SpriteRenderer renderer = GetRenderer(actorType);
-        CombatActorDataSO data = GetActorData(actorType);
-        Vector3 initialLocalPosition = GetInitialLocalPosition(actorType);
-        if (pivot == null || renderer == null || data == null)
+        if (!TryResolveActorRef(actorId, out CombatActorRuntime actor, out Transform pivot, out SpriteRenderer renderer))
         {
             return;
         }
 
-        KillSequence(actorType);
-        if (data.attackSprite != null)
+        CombatActorDataSO data = actor.SourceData;
+        int slot = Mathf.Clamp(actor.SlotIndex, 0, 2);
+        Vector3 initialLocalPosition = GetInitialLocalPosition(actor.ActorType, slot);
+
+        KillSequence(actor.ActorType, slot);
+        if (data != null && data.attackSprite != null)
         {
             renderer.sprite = data.attackSprite;
         }
 
-        Vector3 directionOffset = actorType == CombatActorType.Ally ? data.attackMoveOffset : -data.attackMoveOffset;
+        Vector3 moveOffset = data != null ? data.attackMoveOffset : new Vector3(0.35f, 0f, 0f);
+        if (actor.ActorType == CombatActorType.Enemy)
+        {
+            moveOffset = -moveOffset;
+        }
+
+        float moveDuration = data != null ? Mathf.Max(0f, data.attackMoveDuration) : 0.12f;
+        float returnDuration = data != null ? Mathf.Max(0f, data.attackReturnDuration) : 0.14f;
+
         Sequence sequence = DOTween.Sequence();
-        sequence.Append(pivot.DOLocalMove(initialLocalPosition + directionOffset, Mathf.Max(0f, data.attackMoveDuration)).SetEase(Ease.OutQuad));
-        sequence.Append(pivot.DOLocalMove(initialLocalPosition, Mathf.Max(0f, data.attackReturnDuration)).SetEase(Ease.InQuad));
+        sequence.Append(pivot.DOLocalMove(initialLocalPosition + moveOffset, moveDuration).SetEase(Ease.OutQuad));
+        sequence.Append(pivot.DOLocalMove(initialLocalPosition, returnDuration).SetEase(Ease.InQuad));
         sequence.OnComplete(() =>
         {
-            pivot.localPosition = initialLocalPosition;
-            if (data.idleSprite != null)
+            if (pivot != null)
+            {
+                pivot.localPosition = initialLocalPosition;
+            }
+
+            if (renderer != null && data != null && data.idleSprite != null)
             {
                 renderer.sprite = data.idleSprite;
             }
         });
 
-        SetSequence(actorType, sequence);
+        SetSequence(actor.ActorType, slot, sequence);
     }
 
-    private void PlayHitSequence(CombatActorType actorType, bool isDead)
+    private void PlayHitSequence(int actorId)
     {
-        Transform pivot = GetPivot(actorType);
-        SpriteRenderer renderer = GetRenderer(actorType);
-        CombatActorDataSO data = GetActorData(actorType);
-        Vector3 initialLocalPosition = GetInitialLocalPosition(actorType);
-        if (pivot == null || renderer == null || data == null)
+        if (!TryResolveActorRef(actorId, out CombatActorRuntime actor, out Transform pivot, out SpriteRenderer renderer))
         {
             return;
         }
 
-        KillSequence(actorType);
-        if (data.hitSprite != null)
+        CombatActorDataSO data = actor.SourceData;
+        int slot = Mathf.Clamp(actor.SlotIndex, 0, 2);
+        Vector3 initialLocalPosition = GetInitialLocalPosition(actor.ActorType, slot);
+
+        KillSequence(actor.ActorType, slot);
+        if (data != null && data.hitSprite != null)
         {
             renderer.sprite = data.hitSprite;
         }
 
+        float duration = data != null ? Mathf.Max(0f, data.hitShakeDuration) : 0.18f;
+        float strength = data != null ? data.hitShakeStrength : 0.12f;
+        int vibrato = data != null ? Mathf.Max(0, data.hitShakeVibrato) : 12;
+
         Sequence sequence = DOTween.Sequence();
-        sequence.Append(pivot.DOShakePosition(
-            Mathf.Max(0f, data.hitShakeDuration),
-            data.hitShakeStrength,
-            Mathf.Max(0, data.hitShakeVibrato),
-            90f,
-            false,
-            true));
+        sequence.Append(pivot.DOShakePosition(duration, strength, vibrato, 90f, false, true));
         sequence.OnComplete(() =>
         {
-            pivot.localPosition = initialLocalPosition;
-            if (isDead)
+            if (pivot != null)
             {
-                PlayDeathSequence(actorType);
+                pivot.localPosition = initialLocalPosition;
             }
-            else if (data.idleSprite != null)
+
+            if (actor.IsDead)
+            {
+                PlayDeathSequence(actorId);
+            }
+            else if (renderer != null && data != null && data.idleSprite != null)
             {
                 renderer.sprite = data.idleSprite;
             }
         });
 
-        SetSequence(actorType, sequence);
+        SetSequence(actor.ActorType, slot, sequence);
     }
 
-    private void PlayDeathSequence(CombatActorType actorType)
+    private void PlayDeathSequence(int actorId)
     {
-        SpriteRenderer renderer = GetRenderer(actorType);
-        CombatActorDataSO data = GetActorData(actorType);
-        if (renderer == null || data == null)
+        if (!TryResolveActorRef(actorId, out CombatActorRuntime actor, out _, out SpriteRenderer renderer))
         {
             return;
         }
 
-        KillSequence(actorType);
-        if (data.deathSprite != null)
+        CombatActorDataSO data = actor.SourceData;
+        int slot = Mathf.Clamp(actor.SlotIndex, 0, 2);
+        KillSequence(actor.ActorType, slot);
+
+        if (renderer == null)
+        {
+            return;
+        }
+
+        if (data != null && data.deathSprite != null)
         {
             renderer.sprite = data.deathSprite;
         }
 
+        float fadeDuration = data != null ? Mathf.Max(0f, data.deathFadeDuration) : 0.7f;
         Sequence sequence = DOTween.Sequence();
         sequence.Append(DOTween.To(
             () => renderer.color.a,
             alpha => SetRendererAlpha(renderer, alpha),
             0f,
-            Mathf.Max(0f, data.deathFadeDuration)).SetEase(Ease.OutQuad));
+            fadeDuration).SetEase(Ease.OutQuad));
         sequence.OnComplete(() =>
         {
             if (renderer != null)
@@ -264,64 +274,101 @@ public class CombatView : MonoBehaviour
             }
         });
 
-        SetSequence(actorType, sequence);
+        SetSequence(actor.ActorType, slot, sequence);
     }
 
-    private Transform GetPivot(CombatActorType actorType)
+    private bool TryResolveActorRef(int actorId, out CombatActorRuntime actor, out Transform pivot, out SpriteRenderer renderer)
     {
-        return actorType == CombatActorType.Enemy ? enemyPivot : playerPivot;
-    }
-
-    private SpriteRenderer GetRenderer(CombatActorType actorType)
-    {
-        return actorType == CombatActorType.Enemy ? enemySpriteRenderer : playerSpriteRenderer;
-    }
-
-    private CombatActorDataSO GetActorData(CombatActorType actorType)
-    {
-        return actorType == CombatActorType.Enemy ? _enemyData : _playerData;
-    }
-
-    private Vector3 GetInitialLocalPosition(CombatActorType actorType)
-    {
-        return actorType == CombatActorType.Enemy ? _enemyInitialLocalPosition : _playerInitialLocalPosition;
-    }
-
-    private void SetSequence(CombatActorType actorType, Sequence sequence)
-    {
-        if (actorType == CombatActorType.Enemy)
+        actor = null;
+        pivot = null;
+        renderer = null;
+        if (_combatManager == null || _combatManager.RuntimeState == null)
         {
-            _enemySequence = sequence;
+            return false;
+        }
+
+        actor = _combatManager.RuntimeState.GetActorById(actorId);
+        if (actor == null)
+        {
+            return false;
+        }
+
+        int slot = Mathf.Clamp(actor.SlotIndex, 0, 2);
+        pivot = GetPivot(actor.ActorType, slot);
+        renderer = GetRenderer(actor.ActorType, slot);
+        return pivot != null && renderer != null;
+    }
+
+    private Transform GetPivot(CombatActorType actorType, int slotIndex)
+    {
+        Transform[] array = actorType == CombatActorType.Enemy ? enemyPivots : allyPivots;
+        if (array != null && slotIndex >= 0 && slotIndex < array.Length)
+        {
+            return array[slotIndex];
+        }
+
+        return null;
+    }
+
+    private SpriteRenderer GetRenderer(CombatActorType actorType, int slotIndex)
+    {
+        SpriteRenderer[] array = actorType == CombatActorType.Enemy ? enemyRenderers : allyRenderers;
+        if (array != null && slotIndex >= 0 && slotIndex < array.Length)
+        {
+            return array[slotIndex];
+        }
+
+        return null;
+    }
+
+    private Vector3 GetInitialLocalPosition(CombatActorType actorType, int slotIndex)
+    {
+        if (slotIndex < 0 || slotIndex > 2)
+        {
+            return Vector3.zero;
+        }
+
+        return actorType == CombatActorType.Enemy ? _enemyInitialLocalPositions[slotIndex] : _allyInitialLocalPositions[slotIndex];
+    }
+
+    private void SetSequence(CombatActorType actorType, int slotIndex, Sequence sequence)
+    {
+        if (slotIndex < 0 || slotIndex > 2)
+        {
             return;
         }
 
-        _playerSequence = sequence;
-    }
-
-    private void KillSequence(CombatActorType actorType)
-    {
         if (actorType == CombatActorType.Enemy)
         {
-            if (_enemySequence != null)
-            {
-                _enemySequence.Kill(false);
-                _enemySequence = null;
-            }
-
+            _enemySequences[slotIndex] = sequence;
             return;
         }
 
-        if (_playerSequence != null)
+        _allySequences[slotIndex] = sequence;
+    }
+
+    private void KillSequence(CombatActorType actorType, int slotIndex)
+    {
+        if (slotIndex < 0 || slotIndex > 2)
         {
-            _playerSequence.Kill(false);
-            _playerSequence = null;
+            return;
+        }
+
+        Sequence[] array = actorType == CombatActorType.Enemy ? _enemySequences : _allySequences;
+        if (array[slotIndex] != null)
+        {
+            array[slotIndex].Kill(false);
+            array[slotIndex] = null;
         }
     }
 
     private void KillAllSequences()
     {
-        KillSequence(CombatActorType.Ally);
-        KillSequence(CombatActorType.Enemy);
+        for (int i = 0; i < 3; i++)
+        {
+            KillSequence(CombatActorType.Ally, i);
+            KillSequence(CombatActorType.Enemy, i);
+        }
     }
 
     private static void SetRendererAlpha(SpriteRenderer renderer, float alpha)
@@ -334,52 +381,5 @@ public class CombatView : MonoBehaviour
         Color color = renderer.color;
         color.a = Mathf.Clamp01(alpha);
         renderer.color = color;
-    }
-
-    private static CombatActorType ResolveActorType(CombatLogSnapshot snapshot, int actorId)
-    {
-        for (int i = 0; i < snapshot.allies.Length; i++)
-        {
-            if (snapshot.allies[i].actor_id == actorId)
-            {
-                return CombatActorType.Ally;
-            }
-        }
-
-        for (int i = 0; i < snapshot.enemies.Length; i++)
-        {
-            if (snapshot.enemies[i].actor_id == actorId)
-            {
-                return CombatActorType.Enemy;
-            }
-        }
-
-        return CombatActorType.None;
-    }
-
-    private static bool IsAlliesWiped(CombatLogSnapshot snapshot)
-    {
-        for (int i = 0; i < snapshot.allies.Length; i++)
-        {
-            if (!snapshot.allies[i].is_dead)
-            {
-                return false;
-            }
-        }
-
-        return snapshot.allies.Length > 0;
-    }
-
-    private static bool IsEnemiesWiped(CombatLogSnapshot snapshot)
-    {
-        for (int i = 0; i < snapshot.enemies.Length; i++)
-        {
-            if (!snapshot.enemies[i].is_dead)
-            {
-                return false;
-            }
-        }
-
-        return snapshot.enemies.Length > 0;
     }
 }

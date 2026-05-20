@@ -1,4 +1,4 @@
-using System.Text;
+﻿using System.Text;
 using TMPro;
 using UnityEngine;
 using UnityEngine.UI;
@@ -24,6 +24,9 @@ public class CombatScreenPresenter : MonoBehaviour
 
     private HourglassCombatManager _combatManager;
     private CombatTimelineEntrySnapshot[] _lastTimelinePreview = System.Array.Empty<CombatTimelineEntrySnapshot>();
+    private CombatActionDataSO _basicAction;
+    private CombatActionDataSO _guardAction;
+    private CombatActionDataSO _specialAction;
 
     private void OnEnable()
     {
@@ -50,11 +53,10 @@ public class CombatScreenPresenter : MonoBehaviour
         EventBus.Instance.Subscribe<CombatPressureChangedEvent>(OnCombatPressureChanged);
         EventBus.Instance.Subscribe<CombatEndedEvent>(OnCombatEnded);
 
-        EventBus.Instance.Subscribe<CombatStrikeInputEvent>(OnCombatStrikeInput);
-        EventBus.Instance.Subscribe<CombatPierceInputEvent>(OnCombatPierceInput);
-        EventBus.Instance.Subscribe<CombatHexInputEvent>(OnCombatHexInput);
+        EventBus.Instance.Subscribe<CombatStrikeInputEvent>(OnCombatBasicInput);
+        EventBus.Instance.Subscribe<CombatPierceInputEvent>(OnCombatSpecialInput);
+        EventBus.Instance.Subscribe<CombatHexInputEvent>(OnCombatGuardSkillInput);
         EventBus.Instance.Subscribe<CombatGuardInputEvent>(OnCombatGuardInput);
-        EventBus.Instance.Subscribe<CombatEndTurnInputEvent>(OnCombatEndTurnInput);
     }
 
     private void Start()
@@ -97,11 +99,10 @@ public class CombatScreenPresenter : MonoBehaviour
         EventBus.Instance.Unsubscribe<CombatPressureChangedEvent>(OnCombatPressureChanged);
         EventBus.Instance.Unsubscribe<CombatEndedEvent>(OnCombatEnded);
 
-        EventBus.Instance.Unsubscribe<CombatStrikeInputEvent>(OnCombatStrikeInput);
-        EventBus.Instance.Unsubscribe<CombatPierceInputEvent>(OnCombatPierceInput);
-        EventBus.Instance.Unsubscribe<CombatHexInputEvent>(OnCombatHexInput);
+        EventBus.Instance.Unsubscribe<CombatStrikeInputEvent>(OnCombatBasicInput);
+        EventBus.Instance.Unsubscribe<CombatPierceInputEvent>(OnCombatSpecialInput);
+        EventBus.Instance.Unsubscribe<CombatHexInputEvent>(OnCombatGuardSkillInput);
         EventBus.Instance.Unsubscribe<CombatGuardInputEvent>(OnCombatGuardInput);
-        EventBus.Instance.Unsubscribe<CombatEndTurnInputEvent>(OnCombatEndTurnInput);
     }
 
     private void CacheCombatManager()
@@ -119,11 +120,10 @@ public class CombatScreenPresenter : MonoBehaviour
             return;
         }
 
-        BindButton(actionPanelView.StrikeButton, RequestStrike);
-        BindButton(actionPanelView.PierceButton, RequestPierce);
-        BindButton(actionPanelView.HexButton, RequestHex);
-        BindButton(actionPanelView.GuardButton, RequestGuard);
-        BindButton(actionPanelView.EndTurnButton, RequestEndTurn);
+        BindButton(actionPanelView.BasicButton, RequestBasicAction);
+        BindButton(actionPanelView.SpecialButton, RequestSpecialAction);
+        BindButton(actionPanelView.GuardButton, RequestGuardAction);
+        BindButton(actionPanelView.FlipButton, RequestFlip);
     }
 
     private static void BindButton(Button button, UnityEngine.Events.UnityAction action)
@@ -137,7 +137,7 @@ public class CombatScreenPresenter : MonoBehaviour
         button.onClick.AddListener(action);
     }
 
-    private void RefreshViews()
+    private void RefreshViews(bool refreshActionPanel = true)
     {
         CacheCombatManager();
         CombatRuntimeState state = _combatManager != null ? _combatManager.RuntimeState : null;
@@ -150,56 +150,165 @@ public class CombatScreenPresenter : MonoBehaviour
         CombatActorRuntime selectedAlly = state.GetSelectedAlly();
         CombatActorRuntime selectedEnemy = state.GetSelectedEnemy();
         bool planning = state.TurnState == CombatTurnState.PlayerCommand && !state.IsCombatEnded;
+        int pressureMax = state.DifficultyData != null ? Mathf.Max(1, state.DifficultyData.pressureMax) : 2;
 
         playerStatusView?.ApplyActorState(selectedAlly, planning, true);
         enemyStatusView?.ApplyActorState(selectedEnemy, planning, false);
+        playerStatusView?.SetIntentText(string.Empty);
+        enemyStatusView?.SetIntentText(BuildSelectedEnemyIntentText(state, selectedEnemy));
+        playerStatusView?.SetPressureState(false, 0, pressureMax);
+        enemyStatusView?.SetPressureState(true, state.Pressure, pressureMax);
         hourglassView?.Refresh(state);
         boardView?.Refresh(state);
         timelineView?.SetTimeline(_lastTimelinePreview);
 
-        UpdateActionPanel(state);
+        if (refreshActionPanel)
+        {
+            RefreshActionPanelForSelectedAlly(state);
+        }
+        else
+        {
+            UpdateActionPanelInteractivity(state);
+        }
         UpdateDebugText(state);
     }
 
-    private void UpdateActionPanel(CombatRuntimeState state)
+    private void RefreshActionPanelForSelectedAlly(CombatRuntimeState state)
     {
         if (actionPanelView == null || _combatManager == null || state == null)
         {
             return;
         }
 
-        CombatActionDataSO[] actions = _combatManager.GetSelectedAllyActions();
         bool planning = state.TurnState == CombatTurnState.PlayerCommand && !state.IsCombatEnded;
+        CombatActorRuntime selectedAlly = state.GetSelectedAlly();
+        ResolveSelectedAllyActions(selectedAlly, out _basicAction, out _guardAction, out _specialAction);
 
-        for (int i = 0; i < 3; i++)
-        {
-            CombatActionDataSO action = i < actions.Length ? actions[i] : null;
-            bool interactable = false;
-            string effect = "-";
-            int cost = 0;
-            int speed = 0;
-            string name = i == 0 ? "Q Empty" : i == 1 ? "W Empty" : "E Empty";
-
-            if (action != null)
-            {
-                name = string.IsNullOrWhiteSpace(action.displayName) ? action.name : action.displayName;
-                cost = action.baseCost;
-                speed = action.speed;
-                effect = BuildActionEffectText(action);
-                interactable = planning && _combatManager.CanQueueActionForSelectedAlly(action, out _);
-            }
-
-            actionPanelView.SetActionSlot(i, name, cost, speed, effect, interactable);
-        }
-
+        ApplyActionSlot(0, "Q Basic", _basicAction, planning);
+        ApplyActionSlot(1, "W Special", _specialAction, planning);
+        ApplyActionSlot(2, "E Guard", _guardAction, planning);
         int predictedEnemySand = Mathf.Max(state.MinimumFall, state.LowerSand + state.PlayerSpend);
         actionPanelView.SetEndTurnPreview(true, predictedEnemySand);
-        actionPanelView.SetInteractable(
-            actionPanelView.StrikeButton != null && actionPanelView.StrikeButton.interactable,
-            actionPanelView.PierceButton != null && actionPanelView.PierceButton.interactable,
-            actionPanelView.HexButton != null && actionPanelView.HexButton.interactable,
-            planning,
-            planning);
+        actionPanelView.SetFlipInteractable(planning);
+    }
+
+    private void UpdateActionPanelInteractivity(CombatRuntimeState state)
+    {
+        if (actionPanelView == null || _combatManager == null || state == null)
+        {
+            return;
+        }
+
+        bool planning = state.TurnState == CombatTurnState.PlayerCommand && !state.IsCombatEnded;
+        ApplyActionSlot(0, "Q Basic", _basicAction, planning);
+        ApplyActionSlot(1, "W Special", _specialAction, planning);
+        ApplyActionSlot(2, "E Guard", _guardAction, planning);
+        int predictedEnemySand = Mathf.Max(state.MinimumFall, state.LowerSand + state.PlayerSpend);
+        actionPanelView.SetEndTurnPreview(true, predictedEnemySand);
+        actionPanelView.SetFlipInteractable(planning);
+    }
+
+    private void ApplyActionSlot(int slotIndex, string emptyName, CombatActionDataSO action, bool planning)
+    {
+        string name = emptyName;
+        int cost = 0;
+        string effect = "-";
+        bool interactable = false;
+
+        if (action != null)
+        {
+            name = string.IsNullOrWhiteSpace(action.displayName) ? action.name : action.displayName;
+            cost = action.baseCost;
+            effect = BuildActionEffectText(action);
+            interactable = planning && _combatManager.CanQueueActionForSelectedAlly(action, out _);
+        }
+
+        actionPanelView.SetActionSlot(slotIndex, name, cost, effect, interactable, true);
+    }
+
+    private static void ResolveSelectedAllyActions(
+        CombatActorRuntime selectedAlly,
+        out CombatActionDataSO basicAction,
+        out CombatActionDataSO guardAction,
+        out CombatActionDataSO specialAction)
+    {
+        basicAction = null;
+        guardAction = null;
+        specialAction = null;
+        if (selectedAlly == null || selectedAlly.ActionList == null || selectedAlly.ActionList.Count == 0)
+        {
+            return;
+        }
+
+        for (int i = 0; i < selectedAlly.ActionList.Count; i++)
+        {
+            CombatActionDataSO action = selectedAlly.ActionList[i];
+            if (action == null)
+            {
+                continue;
+            }
+
+            if (basicAction == null && IsBasicAttackAction(action))
+            {
+                basicAction = action;
+                continue;
+            }
+
+            if (guardAction == null && action.actionType == CombatActionType.Guard)
+            {
+                guardAction = action;
+                continue;
+            }
+        }
+
+        if (basicAction == null)
+        {
+            basicAction = selectedAlly.ActionList.Find(IsBasicAttackAction);
+        }
+
+        for (int i = 0; i < selectedAlly.ActionList.Count; i++)
+        {
+            CombatActionDataSO action = selectedAlly.ActionList[i];
+            if (action == null || action == basicAction || action == guardAction)
+            {
+                continue;
+            }
+
+            specialAction = action;
+            break;
+        }
+
+        if (basicAction == null)
+        {
+            Debug.LogWarning($"[Combat] Basic attack action missing for ally '{selectedAlly.DisplayName}'.");
+        }
+
+        if (guardAction == null)
+        {
+            Debug.LogWarning($"[Combat] Guard action missing for ally '{selectedAlly.DisplayName}'.");
+        }
+
+        if (specialAction == null)
+        {
+            Debug.LogWarning($"[Combat] Special action missing for ally '{selectedAlly.DisplayName}'.");
+        }
+    }
+
+    private static bool IsBasicAttackAction(CombatActionDataSO action)
+    {
+        if (action == null)
+        {
+            return false;
+        }
+
+        if (action.actionType == CombatActionType.BasicAttack || action.actionType == CombatActionType.Strike)
+        {
+            return true;
+        }
+
+        string id = string.IsNullOrWhiteSpace(action.actionId) ? action.name : action.actionId;
+        string lower = id.ToLowerInvariant();
+        return lower.Contains("basic") || lower.Contains("attack") || lower.Contains("strike");
     }
 
     private static string BuildActionEffectText(CombatActionDataSO action)
@@ -292,9 +401,49 @@ public class CombatScreenPresenter : MonoBehaviour
         return builder.ToString();
     }
 
+    private static string BuildSelectedEnemyIntentText(CombatRuntimeState state, CombatActorRuntime selectedEnemy)
+    {
+        if (state == null || selectedEnemy == null || selectedEnemy.IsDead || selectedEnemy.ActorType != CombatActorType.Enemy)
+        {
+            return "-";
+        }
+
+        CombatIntentRuntime? selectedIntent = FindIntent(state.EnemyIntents, selectedEnemy.ActorId);
+        if (!selectedIntent.HasValue)
+        {
+            return selectedEnemy.BreakSkipCount > 0 ? "대기" : "-";
+        }
+
+        CombatIntentRuntime intent = selectedIntent.Value;
+        if (string.IsNullOrWhiteSpace(intent.DisplayName))
+        {
+            return "-";
+        }
+
+        return $"{intent.DisplayName} / Cost {intent.EffectiveCost}";
+    }
+
+    private static CombatIntentRuntime? FindIntent(System.Collections.Generic.List<CombatIntentRuntime> intents, int actorId)
+    {
+        if (intents == null)
+        {
+            return null;
+        }
+
+        for (int i = 0; i < intents.Count; i++)
+        {
+            if (intents[i].SourceActorId == actorId)
+            {
+                return intents[i];
+            }
+        }
+
+        return null;
+    }
+
     private void SetAllButtonsInteractable(bool interactable)
     {
-        actionPanelView?.SetInteractable(interactable, interactable, interactable, interactable, interactable);
+        actionPanelView?.SetAllInteractable(interactable, interactable, interactable, interactable);
     }
 
     private void OnCombatRoundStarted(CombatRoundStartedEvent evt)
@@ -312,6 +461,7 @@ public class CombatScreenPresenter : MonoBehaviour
     private void OnCombatCommandQueued(CombatCommandQueuedEvent evt)
     {
         combatLogView?.AddLog($"[R{evt.Snapshot.round_index}] Queue {evt.Command.DisplayName} c{evt.Command.Cost} s{evt.Command.Speed} -> U:{evt.PredictedUpperSand} L:{evt.PredictedLowerSand}");
+        hourglassView?.AnimateQueuedSpend(evt.PredictedUpperSand, evt.PredictedLowerSand);
         RefreshViews();
     }
 
@@ -330,6 +480,7 @@ public class CombatScreenPresenter : MonoBehaviour
     private void OnCombatMinimumFallApplied(CombatMinimumFallAppliedEvent evt)
     {
         combatLogView?.AddLog($"[R{evt.Snapshot.round_index}] MinFall forced {evt.ForcedAmount}");
+        hourglassView?.AnimateMinimumFall(evt.UpperAfter, evt.LowerAfter, evt.ForcedAmount);
         RefreshViews();
     }
 
@@ -429,7 +580,14 @@ public class CombatScreenPresenter : MonoBehaviour
     private void OnCombatActorSelected(CombatActorSelectedEvent evt)
     {
         combatLogView?.AddLog($"[R{evt.Snapshot.round_index}] Selected {evt.TeamType} slot {evt.SlotIndex}");
-        RefreshViews();
+        if (evt.TeamType == CombatActorType.Ally)
+        {
+            RefreshViews(true);
+        }
+        else
+        {
+            RefreshViews(false);
+        }
     }
 
     private void OnCombatActorDamaged(CombatActorDamagedEvent evt)
@@ -487,11 +645,10 @@ public class CombatScreenPresenter : MonoBehaviour
         RefreshViews();
     }
 
-    private void OnCombatStrikeInput(CombatStrikeInputEvent evt) => TryRequestFromInput(actionPanelView != null ? actionPanelView.StrikeButton : null, RequestStrike);
-    private void OnCombatPierceInput(CombatPierceInputEvent evt) => TryRequestFromInput(actionPanelView != null ? actionPanelView.PierceButton : null, RequestPierce);
-    private void OnCombatHexInput(CombatHexInputEvent evt) => TryRequestFromInput(actionPanelView != null ? actionPanelView.HexButton : null, RequestHex);
-    private void OnCombatGuardInput(CombatGuardInputEvent evt) => TryRequestFromInput(actionPanelView != null ? actionPanelView.GuardButton : null, RequestGuard);
-    private void OnCombatEndTurnInput(CombatEndTurnInputEvent evt) => TryRequestFromInput(actionPanelView != null ? actionPanelView.EndTurnButton : null, RequestEndTurn);
+    private void OnCombatBasicInput(CombatStrikeInputEvent evt) => TryRequestFromInput(actionPanelView != null ? actionPanelView.BasicButton : null, RequestBasicAction);
+    private void OnCombatSpecialInput(CombatPierceInputEvent evt) => TryRequestFromInput(actionPanelView != null ? actionPanelView.SpecialButton : null, RequestSpecialAction);
+    private void OnCombatGuardSkillInput(CombatHexInputEvent evt) => TryRequestFromInput(actionPanelView != null ? actionPanelView.GuardButton : null, RequestGuardAction);
+    private void OnCombatGuardInput(CombatGuardInputEvent evt) => TryRequestFromInput(actionPanelView != null ? actionPanelView.FlipButton : null, RequestFlip);
 
     private void TryRequestFromInput(Button button, System.Action request)
     {
@@ -508,38 +665,42 @@ public class CombatScreenPresenter : MonoBehaviour
         request.Invoke();
     }
 
-    private void RequestStrike()
+    private void RequestBasicAction()
     {
         if (hourglassView != null && hourglassView.IsTransitioning) return;
         CacheCombatManager();
-        _combatManager?.RequestStrike();
+        if (_basicAction != null)
+        {
+            _combatManager?.RequestActionForSelectedAlly(_basicAction);
+        }
     }
 
-    private void RequestPierce()
+    private void RequestSpecialAction()
     {
         if (hourglassView != null && hourglassView.IsTransitioning) return;
         CacheCombatManager();
-        _combatManager?.RequestPierce();
+        if (_specialAction != null)
+        {
+            _combatManager?.RequestActionForSelectedAlly(_specialAction);
+        }
     }
 
-    private void RequestHex()
+    private void RequestGuardAction()
     {
         if (hourglassView != null && hourglassView.IsTransitioning) return;
         CacheCombatManager();
-        _combatManager?.RequestHex();
+        if (_guardAction != null)
+        {
+            _combatManager?.RequestActionForSelectedAlly(_guardAction);
+        }
     }
 
-    private void RequestGuard()
-    {
-        if (hourglassView != null && hourglassView.IsTransitioning) return;
-        CacheCombatManager();
-        _combatManager?.RequestGuard();
-    }
-
-    private void RequestEndTurn()
+    private void RequestFlip()
     {
         if (hourglassView != null && hourglassView.IsTransitioning) return;
         CacheCombatManager();
         _combatManager?.RequestEndTurn();
     }
 }
+
+

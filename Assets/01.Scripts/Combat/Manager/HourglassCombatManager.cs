@@ -1,4 +1,5 @@
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
 
@@ -8,11 +9,13 @@ public class HourglassCombatManager : Singleton<HourglassCombatManager>
     [SerializeField] private HourglassCombatConfigSO _config;
     [SerializeField] private CombatActionDataSO[] _globalActionCatalog;
     [SerializeField] private float _flipDuration = 0.45f;
+    [SerializeField] private float _phaseStepDelay = 0.12f;
 
     private readonly CombatActionResolver _actionResolver = new CombatActionResolver();
     private readonly CombatTurnProcessor _turnProcessor = new CombatTurnProcessor();
     private readonly Dictionary<CombatActionType, CombatActionDataSO> _actionByType = new Dictionary<CombatActionType, CombatActionDataSO>();
     private int? _nextCombatPlayerStartHpOverride;
+    private Coroutine _roundResolveRoutine;
 
     public CombatRuntimeState RuntimeState { get; private set; }
     public float FlipDuration => Mathf.Max(0f, _flipDuration);
@@ -59,6 +62,37 @@ public class HourglassCombatManager : Singleton<HourglassCombatManager>
         }
     }
 
+    public void ConfigureCombatParties(CombatActorDataSO[] allyParty, CombatActorDataSO[] enemyParty)
+    {
+        if (_config == null)
+        {
+            Debug.LogError("[Combat] Cannot configure parties because config is null.");
+            return;
+        }
+
+        if (allyParty == null || allyParty.Length < 3 || enemyParty == null || enemyParty.Length < 3)
+        {
+            Debug.LogError("[Combat] ConfigureCombatParties requires 3 allies and 3 enemies.");
+            return;
+        }
+
+        if (_config.allyPartyActors == null || _config.allyPartyActors.Length < 3)
+        {
+            _config.allyPartyActors = new CombatActorDataSO[3];
+        }
+
+        if (_config.enemyPartyActors == null || _config.enemyPartyActors.Length < 3)
+        {
+            _config.enemyPartyActors = new CombatActorDataSO[3];
+        }
+
+        for (int i = 0; i < 3; i++)
+        {
+            _config.allyPartyActors[i] = allyParty[i];
+            _config.enemyPartyActors[i] = enemyParty[i];
+        }
+    }
+
     public void StartCombat()
     {
         if (!InitializeRuntime())
@@ -73,6 +107,35 @@ public class HourglassCombatManager : Singleton<HourglassCombatManager>
     public void RequestStrike() => RequestActionAtQuickSlot(0);
     public void RequestPierce() => RequestActionAtQuickSlot(1);
     public void RequestHex() => RequestActionAtQuickSlot(2);
+    public void RequestActionForSelectedAlly(CombatActionDataSO actionData)
+    {
+        if (!CanAcceptPlayerInput() || actionData == null)
+        {
+            return;
+        }
+
+        CombatActorRuntime source = RuntimeState.GetSelectedAlly();
+        if (source == null || source.IsDead)
+        {
+            return;
+        }
+
+        if (!CanQueueActionForSelectedAlly(actionData, out string reason))
+        {
+            Debug.LogWarning($"[Combat] Queue blocked: {reason}");
+            return;
+        }
+
+        CombatCommandRuntime command = CreateRuntimeCommand(source, actionData);
+        QueueOrReplaceCommand(command);
+        RecomputePlayerSpend();
+
+        int unlockedSand = Mathf.Max(1, RuntimeState.TotalSand - RuntimeState.LockedSand);
+        int predictedUpper = Mathf.Clamp(RuntimeState.UpperSand - RuntimeState.PlayerSpend, 0, unlockedSand);
+        int predictedLower = Mathf.Clamp(RuntimeState.LowerSand + RuntimeState.PlayerSpend, 0, unlockedSand);
+        EventBus.Instance.Publish(new CombatCommandQueuedEvent(command, predictedUpper, predictedLower, CreateSnapshot()));
+        Debug.Log($"[Combat] CommandQueued | {command.DisplayName} c{command.Cost} -> U:{predictedUpper} L:{predictedLower}");
+    }
 
     public void RequestGuard()
     {
@@ -90,8 +153,10 @@ public class HourglassCombatManager : Singleton<HourglassCombatManager>
         {
             return;
         }
-
-        ConfirmAndRunRound();
+        if (_roundResolveRoutine == null)
+        {
+            _roundResolveRoutine = StartCoroutine(ConfirmAndRunRoundRoutine());
+        }
     }
 
     public bool SelectAllyBySlot(int slotIndex)
@@ -613,7 +678,7 @@ public class HourglassCombatManager : Singleton<HourglassCombatManager>
         RuntimeState.PlayerSpend = Mathf.Max(0, spend);
     }
 
-    private void ConfirmAndRunRound()
+    private IEnumerator ConfirmAndRunRoundRoutine()
     {
         RuntimeState.TurnState = CombatTurnState.PlayerResolving;
         RecomputePlayerSpend();
@@ -626,28 +691,36 @@ public class HourglassCombatManager : Singleton<HourglassCombatManager>
         }
 
         MovePlayerSpendFromUpperToLower();
+        yield return null;
         ResolveAllyCommands();
+        if (_phaseStepDelay > 0f) yield return new WaitForSeconds(_phaseStepDelay);
         EvaluateCombatEnd();
         if (RuntimeState.IsCombatEnded)
         {
-            return;
+            _roundResolveRoutine = null;
+            yield break;
         }
 
         ApplyMinimumFallAndFlip();
+        yield return new WaitForSeconds(Mathf.Max(_phaseStepDelay, _flipDuration));
         EvaluateCombatEnd();
         if (RuntimeState.IsCombatEnded)
         {
-            return;
+            _roundResolveRoutine = null;
+            yield break;
         }
 
         ResolveEnemyTurn();
+        if (_phaseStepDelay > 0f) yield return new WaitForSeconds(_phaseStepDelay);
         EvaluateCombatEnd();
         if (RuntimeState.IsCombatEnded)
         {
-            return;
+            _roundResolveRoutine = null;
+            yield break;
         }
 
         BeginRound(RuntimeState.TurnIndex + 1);
+        _roundResolveRoutine = null;
     }
 
     private void MovePlayerSpendFromUpperToLower()

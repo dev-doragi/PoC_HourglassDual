@@ -12,12 +12,16 @@ public class CombatActorPanelView : MonoBehaviour
     [SerializeField] private RectTransform _popupAnchor;
     [SerializeField] private Image _border;
     [SerializeField] private Image _hitFlash;
+    [SerializeField] private TMP_Text _nameText;
     [SerializeField] private TMP_Text _hpText;
     [SerializeField] private Slider _hpBar;
     [SerializeField] private TMP_Text _guardText;
     [SerializeField] private Slider _guardBar;
-    [SerializeField] private Slider _threatBar;
+    [SerializeField] private Slider _pressureBar;
+    [SerializeField] private TMP_Text _pressureLabelText;
+    [SerializeField] private TMP_Text _pressureValueText;
     [SerializeField] private TMP_Text _groggyText;
+    [SerializeField] private TMP_Text _intentText;
     [SerializeField] private TMP_Text _warningText;
     [SerializeField] private TMP_Text[] _turnTintTexts;
     [SerializeField] private Color _turnHighlightColor = new Color(1f, 0.88f, 0.2f, 1f);
@@ -45,12 +49,38 @@ public class CombatActorPanelView : MonoBehaviour
         CacheVisualDefaults();
         if (actor == null)
         {
+            if (_nameText != null) _nameText.text = "-";
+            if (_hpText != null) _hpText.text = "-";
+            if (_guardText != null) _guardText.text = "-";
+            if (_hpBar != null)
+            {
+                _hpBar.minValue = 0f;
+                _hpBar.maxValue = 1f;
+                _hpBar.value = 0f;
+            }
+
+            if (_guardBar != null)
+            {
+                _guardBar.minValue = 0f;
+                _guardBar.maxValue = 1f;
+                _guardBar.value = 0f;
+            }
+
+            if (_groggyText != null) _groggyText.text = string.Empty;
+            if (_warningText != null) _warningText.text = string.Empty;
+            if (_intentText != null) _intentText.text = string.Empty;
+            SetPressureState(false, 0, 1);
             return;
         }
 
         if (_hpText != null)
         {
-            _hpText.text = $"{actor.DisplayName}  HP {actor.CurrentHp}/{Mathf.Max(1, actor.MaxHp)}";
+            _hpText.text = $"{actor.CurrentHp}/{Mathf.Max(1, actor.MaxHp)}";
+        }
+
+        if (_nameText != null)
+        {
+            _nameText.text = actor.DisplayName;
         }
 
         if (_hpBar != null)
@@ -63,7 +93,7 @@ public class CombatActorPanelView : MonoBehaviour
 
         if (_guardText != null)
         {
-            _guardText.text = $"Guard {actor.GuardValue}/{Mathf.Max(0, actor.MaxGuard)}";
+            _guardText.text = $"{actor.GuardValue}/{Mathf.Max(0, actor.MaxGuard)}";
         }
 
         if (_guardBar != null)
@@ -74,25 +104,54 @@ public class CombatActorPanelView : MonoBehaviour
             _guardBar.interactable = false;
         }
 
-        if (_threatBar != null)
-        {
-            _threatBar.minValue = 0f;
-            _threatBar.maxValue = 1f;
-            _threatBar.value = 0f;
-            _threatBar.interactable = false;
-        }
-
         if (_groggyText != null)
         {
-            _groggyText.text = actor.SkipCurrentAction || actor.SkipNextAction ? "Break Skip" : string.Empty;
+            _groggyText.text = actor.BreakSkipCount > 0 || actor.IsBroken ? "GROGGY" : string.Empty;
         }
 
-        if (_warningText != null)
+        if (_warningText != null) _warningText.text = string.Empty;
+
+        if (isAlly && _intentText != null)
         {
-            _warningText.text = actor.IsDead ? "DEAD" : (isAlly ? string.Empty : (actor.GuardValue <= 0 ? "BROKEN" : string.Empty));
+            _intentText.text = string.Empty;
         }
 
         ApplyTurnVisual(isCurrentTurn);
+    }
+
+    public void SetIntentText(string value)
+    {
+        if (_intentText != null)
+        {
+            _intentText.text = value ?? string.Empty;
+        }
+    }
+
+    public void SetPressureState(bool visible, int pressure, int pressureMax)
+    {
+        int max = Mathf.Max(1, pressureMax);
+        int value = Mathf.Clamp(pressure, 0, max);
+
+        if (_pressureBar != null)
+        {
+            _pressureBar.gameObject.SetActive(visible);
+            _pressureBar.minValue = 0f;
+            _pressureBar.maxValue = max;
+            _pressureBar.value = value;
+            _pressureBar.interactable = false;
+        }
+
+        if (_pressureLabelText != null)
+        {
+            _pressureLabelText.gameObject.SetActive(visible);
+            // Label text is expected to come from localization binding in the scene.
+        }
+
+        if (_pressureValueText != null)
+        {
+            _pressureValueText.gameObject.SetActive(visible);
+            _pressureValueText.text = visible ? $"{value}/{max}" : string.Empty;
+        }
     }
 
     // Backward-compatible wrappers.

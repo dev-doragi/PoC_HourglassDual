@@ -5,81 +5,70 @@ using UnityEngine.UI;
 
 public class CombatActionPanelView : MonoBehaviour
 {
-    [Header("Q")]
-    [SerializeField] private Button _strikeButton;
-    [SerializeField] private TMP_Text _strikeNameText;
-    [SerializeField] private TMP_Text _strikeCostText;
-    [SerializeField] private TMP_Text _strikeEffectText;
-    [SerializeField] private TMP_Text _strikeKeyText;
+    [Header("Q Basic")]
+    [SerializeField] private Button _basicButton;
+    [SerializeField] private TMP_Text _basicNameText;
+    [SerializeField] private TMP_Text _basicCostText;
+    [SerializeField] private TMP_Text _basicEffectText;
+    [SerializeField] private TMP_Text _basicKeyText;
 
-    [Header("W")]
-    [SerializeField] private Button _pierceButton;
-    [SerializeField] private TMP_Text _pierceNameText;
-    [SerializeField] private TMP_Text _pierceCostText;
-    [SerializeField] private TMP_Text _pierceEffectText;
-    [SerializeField] private TMP_Text _pierceKeyText;
+    [Header("W Special")]
+    [SerializeField] private Button _specialButton;
+    [SerializeField] private TMP_Text _specialNameText;
+    [SerializeField] private TMP_Text _specialCostText;
+    [SerializeField] private TMP_Text _specialEffectText;
+    [SerializeField] private TMP_Text _specialKeyText;
 
-    [Header("E")]
-    [SerializeField] private Button _hexButton;
-    [SerializeField] private TMP_Text _hexNameText;
-    [SerializeField] private TMP_Text _hexCostText;
-    [SerializeField] private TMP_Text _hexEffectText;
-    [SerializeField] private TMP_Text _hexKeyText;
-
-    [Header("R")]
+    [Header("E Guard")]
     [SerializeField] private Button _guardButton;
     [SerializeField] private TMP_Text _guardNameText;
     [SerializeField] private TMP_Text _guardCostText;
     [SerializeField] private TMP_Text _guardEffectText;
     [SerializeField] private TMP_Text _guardKeyText;
 
-    [Header("F")]
-    [SerializeField] private Button _endTurnButton;
-    [SerializeField] private TMP_Text _endTurnNameText;
-    [SerializeField] private TMP_Text _endTurnCostText;
-    [SerializeField] private TMP_Text _endTurnEffectText;
-    [SerializeField] private TMP_Text _endTurnKeyText;
+    [Header("R Flip")]
+    [SerializeField] private Button _flipButton;
+    [SerializeField] private TMP_Text _flipNameText;
+    [SerializeField] private TMP_Text _flipCostText;
+    [SerializeField] private TMP_Text _flipEffectText;
+    [SerializeField] private TMP_Text _flipKeyText;
 
-    public Button StrikeButton => _strikeButton;
-    public Button PierceButton => _pierceButton;
-    public Button HexButton => _hexButton;
+    public Button BasicButton => _basicButton;
+    public Button SpecialButton => _specialButton;
     public Button GuardButton => _guardButton;
-    public Button EndTurnButton => _endTurnButton;
+    public Button FlipButton => _flipButton;
 
     private void Awake()
     {
-        RegisterClearSelection(_strikeButton);
-        RegisterClearSelection(_pierceButton);
-        RegisterClearSelection(_hexButton);
+        RegisterClearSelection(_basicButton);
+        RegisterClearSelection(_specialButton);
         RegisterClearSelection(_guardButton);
-        RegisterClearSelection(_endTurnButton);
+        RegisterClearSelection(_flipButton);
     }
 
     private void OnDestroy()
     {
-        UnregisterClearSelection(_strikeButton);
-        UnregisterClearSelection(_pierceButton);
-        UnregisterClearSelection(_hexButton);
+        UnregisterClearSelection(_basicButton);
+        UnregisterClearSelection(_specialButton);
         UnregisterClearSelection(_guardButton);
-        UnregisterClearSelection(_endTurnButton);
+        UnregisterClearSelection(_flipButton);
     }
 
     public void SetStaticTexts()
     {
-        SetTexts(_strikeNameText, _strikeCostText, _strikeEffectText, "Q Action", "-", "-");
-        SetTexts(_pierceNameText, _pierceCostText, _pierceEffectText, "W Action", "-", "-");
-        SetTexts(_hexNameText, _hexCostText, _hexEffectText, "E Action", "-", "-");
-        SetTexts(_guardNameText, _guardCostText, _guardEffectText, "Target Next", "No Cost", "R: 적 타겟 순환");
-        SetTexts(_endTurnNameText, _endTurnCostText, _endTurnEffectText, "Confirm", "F", "명령 확정/해결");
+        SetTexts(_basicNameText, _basicCostText, _basicEffectText, "-", "-", "-");
+        SetTexts(_specialNameText, _specialCostText, _specialEffectText, "-", "-", "-");
+        SetTexts(_guardNameText, _guardCostText, _guardEffectText, "-", "-", "-");
+        SetTexts(_flipNameText, _flipCostText, _flipEffectText, "확정", "R", "명령 확정/실행");
 
-        SetText(_strikeKeyText, "Q");
-        SetText(_pierceKeyText, "W");
-        SetText(_hexKeyText, "E");
-        SetText(_guardKeyText, "R");
-        SetText(_endTurnKeyText, "F");
+        SetText(_basicKeyText, "Q");
+        SetText(_specialKeyText, "W");
+        SetText(_guardKeyText, "E");
+        SetText(_flipKeyText, "R");
+
     }
 
-    public void SetActionSlot(int index, string actionName, int cost, int speed, string effect, bool interactable)
+    public void SetActionSlot(int index, string actionName, int cost, string effect, bool interactable, bool active = true)
     {
         TMP_Text nameText = null;
         TMP_Text costText = null;
@@ -88,47 +77,56 @@ public class CombatActionPanelView : MonoBehaviour
 
         if (index == 0)
         {
-            nameText = _strikeNameText;
-            costText = _strikeCostText;
-            effectText = _strikeEffectText;
-            button = _strikeButton;
+            nameText = _basicNameText;
+            costText = _basicCostText;
+            effectText = _basicEffectText;
+            button = _basicButton;
         }
         else if (index == 1)
         {
-            nameText = _pierceNameText;
-            costText = _pierceCostText;
-            effectText = _pierceEffectText;
-            button = _pierceButton;
+            nameText = _specialNameText;
+            costText = _specialCostText;
+            effectText = _specialEffectText;
+            button = _specialButton;
         }
         else if (index == 2)
         {
-            nameText = _hexNameText;
-            costText = _hexCostText;
-            effectText = _hexEffectText;
-            button = _hexButton;
+            nameText = _guardNameText;
+            costText = _guardCostText;
+            effectText = _guardEffectText;
+            button = _guardButton;
         }
 
-        if (nameText != null) nameText.text = actionName;
-        if (costText != null) costText.text = $"Cost {Mathf.Max(0, cost)} / Spd {Mathf.Max(0, speed)}";
-        if (effectText != null) effectText.text = effect;
-        if (button != null) button.interactable = interactable;
-    }
-
-    public void SetEndTurnPreview(bool nextIsEnemy, int nextSand)
-    {
-        if (_endTurnEffectText != null)
+        if (button != null)
         {
-            _endTurnEffectText.text = $"Pred EnemySand: {Mathf.Max(0, nextSand)}";
+            button.gameObject.SetActive(active);
+            button.interactable = active && interactable;
+        }
+
+        if (nameText != null) nameText.text = active ? actionName : string.Empty;
+        if (costText != null) costText.text = active ? $"Cost {Mathf.Max(0, cost)}" : string.Empty;
+        if (effectText != null) effectText.text = active ? effect : string.Empty;
+    }
+
+    public void SetFlipInteractable(bool interactable)
+    {
+        SetButtonState(_flipButton, interactable);
+    }
+
+    public void SetEndTurnPreview(bool _, int nextSand)
+    {
+        if (_flipEffectText != null)
+        {
+            _flipEffectText.text = $"Pred EnemySand: {Mathf.Max(0, nextSand)}";
         }
     }
 
-    public void SetInteractable(bool strike, bool pierce, bool hex, bool guard, bool endTurn)
+    public void SetAllInteractable(bool basic, bool special, bool guard, bool flip)
     {
-        SetButtonState(_strikeButton, strike);
-        SetButtonState(_pierceButton, pierce);
-        SetButtonState(_hexButton, hex);
+        SetButtonState(_basicButton, basic);
+        SetButtonState(_specialButton, special);
         SetButtonState(_guardButton, guard);
-        SetButtonState(_endTurnButton, endTurn);
+        SetButtonState(_flipButton, flip);
     }
 
     private static void SetTexts(TMP_Text name, TMP_Text cost, TMP_Text effect, string nameValue, string costValue, string effectValue)
@@ -175,3 +173,4 @@ public class CombatActionPanelView : MonoBehaviour
         }
     }
 }
+

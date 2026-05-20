@@ -6,5 +6,6 @@ public enum CombatRoleType
     Supporter = 3,
     Bruiser = 4,
     Healer = 5,
-    Caster = 6
+    Caster = 6,
+    Debuffer = 7
 }

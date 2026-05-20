@@ -18,17 +18,24 @@ public class HourglassSandView : MonoBehaviour
     [SerializeField] private TMP_Text _nextSandText;
     [SerializeField] private float _flipDuration = 0.45f;
     [SerializeField] private float _flipAnglePerTurn = -180f;
+    [SerializeField] private float _sandMoveDuration = 0.2f;
+    [SerializeField] private float _minimumFallDuration = 0.25f;
 
     private bool _isFlipped;
     private bool _isFlipTransitionRunning;
     private Coroutine _flipRoutine;
     private bool _flipQueued;
     private CombatRuntimeState _queuedState;
+    private bool _isSandAnimating;
+    private Tween _upperTween;
+    private Tween _lowerTween;
 
     public bool IsTransitioning => _isFlipTransitionRunning;
 
     private void OnDestroy()
     {
+        _upperTween?.Kill();
+        _lowerTween?.Kill();
         _upperSlider?.DOKill();
         _downerSlider?.DOKill();
         _rotatingVisualRoot?.DOKill();
@@ -66,6 +73,21 @@ public class HourglassSandView : MonoBehaviour
         _queuedState = state;
     }
 
+    public void AnimateQueuedSpend(int predictedUpper, int predictedLower)
+    {
+        AnimateSandTo(predictedUpper, predictedLower, Mathf.Max(0.05f, _sandMoveDuration));
+    }
+
+    public void AnimateMinimumFall(int upperAfter, int lowerAfter, int forcedAmount)
+    {
+        if (forcedAmount <= 0)
+        {
+            return;
+        }
+
+        AnimateSandTo(upperAfter, lowerAfter, Mathf.Max(0.08f, _minimumFallDuration));
+    }
+
     public void SetResultText(bool playerWon)
     {
         if (_turnText != null)
@@ -76,6 +98,11 @@ public class HourglassSandView : MonoBehaviour
 
     private IEnumerator FlipRoutine(CombatRuntimeState state)
     {
+        while (_isSandAnimating)
+        {
+            yield return null;
+        }
+
         _isFlipTransitionRunning = true;
 
         if (_rotatingVisualRoot != null)
@@ -107,7 +134,10 @@ public class HourglassSandView : MonoBehaviour
         {
             _upperSlider.minValue = 0f;
             _upperSlider.maxValue = unlockedSand;
-            _upperSlider.value = Mathf.Clamp(state.UpperSand, 0, unlockedSand);
+            if (!_isSandAnimating)
+            {
+                _upperSlider.value = Mathf.Clamp(state.UpperSand, 0, unlockedSand);
+            }
             _upperSlider.interactable = false;
         }
 
@@ -115,7 +145,10 @@ public class HourglassSandView : MonoBehaviour
         {
             _downerSlider.minValue = 0f;
             _downerSlider.maxValue = unlockedSand;
-            _downerSlider.value = Mathf.Clamp(state.LowerSand, 0, unlockedSand);
+            if (!_isSandAnimating)
+            {
+                _downerSlider.value = Mathf.Clamp(state.LowerSand, 0, unlockedSand);
+            }
             _downerSlider.interactable = false;
         }
 
@@ -133,27 +166,27 @@ public class HourglassSandView : MonoBehaviour
         {
             if (state.TurnState == CombatTurnState.RoundStart)
             {
-                _turnText.text = $"ROUND {state.TurnIndex} / Start";
+                _turnText.text = "PLAYER TURN";
             }
             else if (state.TurnState == CombatTurnState.PlayerCommand)
             {
-                _turnText.text = $"ROUND {state.TurnIndex} / Command";
+                _turnText.text = "PLAYER TURN";
             }
             else if (state.TurnState == CombatTurnState.PlayerResolving)
             {
-                _turnText.text = $"ROUND {state.TurnIndex} / Allies";
+                _turnText.text = "PLAYER TURN";
             }
             else if (state.TurnState == CombatTurnState.Flipping)
             {
-                _turnText.text = $"ROUND {state.TurnIndex} / Flip";
+                _turnText.text = "FLIP";
             }
             else if (state.TurnState == CombatTurnState.EnemyResolving)
             {
-                _turnText.text = $"ROUND {state.TurnIndex} / Enemies";
+                _turnText.text = "ENEMY TURN";
             }
             else if (state.TurnState == CombatTurnState.Ended)
             {
-                _turnText.text = $"ROUND {state.TurnIndex} / Ended";
+                _turnText.text = "ENDED";
             }
             else
             {
@@ -164,7 +197,35 @@ public class HourglassSandView : MonoBehaviour
         if (_nextSandText != null)
         {
             int predictedEnemySand = Mathf.Max(state.MinimumFall, state.LowerSand + state.PlayerSpend);
-            _nextSandText.text = $"MinFall:{state.MinimumFall}  PredEnemySand:{predictedEnemySand}  Pressure:{state.Pressure}";
+            _nextSandText.text = predictedEnemySand.ToString();
         }
+    }
+
+    private void AnimateSandTo(int upper, int lower, float duration)
+    {
+        if (_upperSlider == null || _downerSlider == null)
+        {
+            return;
+        }
+
+        _upperTween?.Kill();
+        _lowerTween?.Kill();
+
+        _isSandAnimating = true;
+        _upperTween = _upperSlider.DOValue(upper, duration).SetEase(Ease.OutQuad);
+        _lowerTween = _downerSlider.DOValue(lower, duration).SetEase(Ease.OutQuad);
+        _lowerTween.OnComplete(() =>
+        {
+            _isSandAnimating = false;
+            if (_upperText != null)
+            {
+                _upperText.text = Mathf.RoundToInt(_upperSlider.value).ToString();
+            }
+
+            if (_downerText != null)
+            {
+                _downerText.text = Mathf.RoundToInt(_downerSlider.value).ToString();
+            }
+        });
     }
 }

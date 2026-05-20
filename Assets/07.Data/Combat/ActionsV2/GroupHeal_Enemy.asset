@@ -1,0 +1,29 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 211cf7e7c07ce93418649b755ac68a84, type: 3}
+  m_Name: GroupHeal_Enemy
+  m_EditorClassIdentifier: Assembly-CSharp::CombatActionDataSO
+  actionId: GroupHeal_Enemy
+  displayName: "\uC804\uCCB4 \uD790"
+  actionType: 22
+  targetType: 4
+  baseCost: 4
+  speed: 5
+  hpDamage: 0
+  guardDamage: 0
+  guardGain: 0
+  healAmount: 2
+  fallbackActionType: 24
+  canTargetAlly: 1
+  canTargetEnemy: 0
+  isAreaAction: 1
+  legacyThreatDelta: 0

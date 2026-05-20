@@ -1,0 +1,26 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 0842bc432588e0a458d1a22edc522cf3, type: 3}
+  m_Name: Intent_Healer_GroupHeal
+  m_EditorClassIdentifier: Assembly-CSharp::EnemyIntentDataSO
+  intentId: Intent_Healer_GroupHeal
+  displayName: "\uAD11\uC5ED \uD790"
+  actionType: 22
+  targetRule: 4
+  baseCost: 4
+  minEffectiveCost: 1
+  speed: 5
+  fallbackActionType: 24
+  hpDamage: 0
+  guardDamage: 0
+  healAmount: 2
+  isAreaAction: 1

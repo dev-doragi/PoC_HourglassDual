@@ -13,22 +13,20 @@ MonoBehaviour:
   m_Name: HourglassCombatConfig_Test
   m_EditorClassIdentifier: Assembly-CSharp::HourglassCombatConfigSO
   totalSand: 10
-  minimumFall: 3
   lockedSand: 2
-  defaultPlayerSand: 6
-  defaultEnemySand: 4
-  breakThreshold: 8
-  threatCap: 3
-  enemyThreatGainPerTurn: 1
-  hexThreatDelta: -1
-  breakThreatDelta: -2
-  resetThreatOnBreak: 1
-  enemyRecoverGuardAmount: 2
-  enemyHighSandRecoverGuardBonus: 1
-  enemyWeakDamage: 3
-  enemyHeavyDamage: 7
-  enemyHeavyPlusDamage: 9
-  enemyDesperationDamage: 10
-  allowThreatMaxDoubleAction: 1
-  enemyDoubleActionFirstDamage: 3
-  enemyDoubleActionSecondDamage: 6
+  selectedDifficulty: {fileID: 11400000, guid: fcfa4f84df1940da94aff7671fc06f37, type: 2}
+  allyPartyActors:
+  - {fileID: 11400000, guid: 7f87367a8075488e9bb6109cac8b4beb, type: 2}
+  - {fileID: 11400000, guid: 1230796006b845769d2515ce54d5a31b, type: 2}
+  - {fileID: 11400000, guid: be6f2e5fc82c41fe899d53723aab736c, type: 2}
+  enemyPartyActors:
+  - {fileID: 11400000, guid: 5cf6656d6a0e44fa825db808412707b0, type: 2}
+  - {fileID: 11400000, guid: f33e5f6b5df54118a8f9cb44dc37b6c4, type: 2}
+  - {fileID: 11400000, guid: aba34285fcea4b06a5b6c9b6133ac476, type: 2}
+  defaultSelectedAllyIndex: 0
+  defaultSelectedEnemyIndex: 0
+  enableKillBonus: 1
+  maxKillBonusPerRound: 1
+  legacyMinimumFall: 3
+  legacyDefaultPlayerSand: 5
+  legacyDefaultEnemySand: 5

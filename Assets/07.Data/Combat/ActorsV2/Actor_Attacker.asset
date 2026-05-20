@@ -1,0 +1,41 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 642458f29de37a44ab66a4c74fd6aea4, type: 3}
+  m_Name: Actor_Attacker
+  m_EditorClassIdentifier: Assembly-CSharp::CombatActorDataSO
+  actorId: 1001
+  displayName: Attacker
+  teamType: 1
+  roleType: 1
+  slotIndex: 0
+  maxHP: 12
+  maxGuard: 4
+  speedBase: 5
+  actionList:
+  - {fileID: 11400000, guid: db3215e7c42e4c4982cf4afb19332462, type: 2}
+  - {fileID: 11400000, guid: caf10240fa2d4436a49f860dcfdca42b, type: 2}
+  - {fileID: 11400000, guid: 0720919d7e6c4ddc8d457c00235a81af, type: 2}
+  enemyIntentList: []
+  legacyInitialSand: 0
+  idleSprite: {fileID: 21300000, guid: 315eec62f3f6aa044863dabb8e41d4d0, type: 3}
+  attackSprite: {fileID: 21300000, guid: 315eec62f3f6aa044863dabb8e41d4d0, type: 3}
+  hitSprite: {fileID: 21300000, guid: 315eec62f3f6aa044863dabb8e41d4d0, type: 3}
+  groggySprite: {fileID: 21300000, guid: 315eec62f3f6aa044863dabb8e41d4d0, type: 3}
+  deathSprite: {fileID: 21300000, guid: ccdf2eced04f55b459616c726c54ac84, type: 3}
+  illustrationSprite: {fileID: 0}
+  attackMoveOffset: {x: 0.35, y: 0, z: 0}
+  attackMoveDuration: 0.12
+  attackReturnDuration: 0.14
+  hitShakeDuration: 0.18
+  hitShakeStrength: 0.12
+  hitShakeVibrato: 12
+  deathFadeDuration: 0.7

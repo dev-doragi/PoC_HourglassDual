@@ -30,6 +30,7 @@ public class CombatTimelineEntryView : MonoBehaviour
             marker = " ▶";
         }
 
-        _text.text = $"{entry.timeline_index + 1}. {entry.label}{marker}";
+        string prefix = entry.status == "EnemyOrderEntryStarted" ? "▶ " : string.Empty;
+        _text.text = $"{prefix}{entry.timeline_index + 1}. {entry.label}{marker}";
     }
 }

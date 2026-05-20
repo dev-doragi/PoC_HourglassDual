@@ -1,0 +1,29 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 211cf7e7c07ce93418649b755ac68a84, type: 3}
+  m_Name: BreakAttack_Breaker
+  m_EditorClassIdentifier: Assembly-CSharp::CombatActionDataSO
+  actionId: BreakAttack_Breaker
+  displayName: "\uCC0C\uB974\uAE30"
+  actionType: 3
+  targetType: 3
+  baseCost: 2
+  speed: 6
+  hpDamage: 1
+  guardDamage: 3
+  guardGain: 0
+  healAmount: 0
+  fallbackActionType: 0
+  canTargetAlly: 0
+  canTargetEnemy: 1
+  isAreaAction: 0
+  legacyThreatDelta: 0
