@@ -10,6 +10,7 @@ public class HourglassCombatManager : Singleton<HourglassCombatManager>
     [SerializeField] private CombatActionDataSO[] _globalActionCatalog;
     [SerializeField] private float _flipDuration = 0.45f;
     [SerializeField] private float _phaseStepDelay = 0.12f;
+    [SerializeField] private float _enemyActionStepDelay = 0.2f;
 
     private readonly CombatActionResolver _actionResolver = new CombatActionResolver();
     private readonly CombatTurnProcessor _turnProcessor = new CombatTurnProcessor();
@@ -109,32 +110,68 @@ public class HourglassCombatManager : Singleton<HourglassCombatManager>
     public void RequestHex() => RequestActionAtQuickSlot(2);
     public void RequestActionForSelectedAlly(CombatActionDataSO actionData)
     {
-        if (!CanAcceptPlayerInput() || actionData == null)
+        if (actionData == null)
         {
             return;
+        }
+
+        TryExecuteActionForSelectedAlly(actionData, -1, out _);
+    }
+
+    public bool TryExecuteActionForSelectedAlly(CombatActionDataSO actionData, int targetActorId, out string reason)
+    {
+        reason = null;
+        if (!CanQueueActionForSelectedAlly(actionData, out reason))
+        {
+            return false;
         }
 
         CombatActorRuntime source = RuntimeState.GetSelectedAlly();
         if (source == null || source.IsDead)
         {
-            return;
+            reason = "NoAliveSource";
+            return false;
         }
 
-        if (!CanQueueActionForSelectedAlly(actionData, out string reason))
+        bool useBonusAction = source.HasActedThisRound
+            && RuntimeState.EnableKillBonus
+            && RuntimeState.KillBonusToken > 0
+            && !RuntimeState.KillBonusCommandConsumedThisRound;
+        if (useBonusAction)
         {
-            Debug.LogWarning($"[Combat] Queue blocked: {reason}");
-            return;
+            RuntimeState.KillBonusCommandConsumedThisRound = true;
         }
 
         CombatCommandRuntime command = CreateRuntimeCommand(source, actionData);
-        QueueOrReplaceCommand(command);
-        RecomputePlayerSpend();
+        if (RequiresEnemyTarget(actionData))
+        {
+            CombatActorRuntime target = targetActorId > 0 ? RuntimeState.GetActorById(targetActorId) : RuntimeState.GetSelectedEnemy();
+            if (target == null || target.IsDead || target.ActorType != CombatActorType.Enemy)
+            {
+                reason = "TargetRequired";
+                return false;
+            }
+
+            command.TargetActorId = target.ActorId;
+            RuntimeState.SelectedEnemySlot = target.SlotIndex;
+        }
 
         int unlockedSand = Mathf.Max(1, RuntimeState.TotalSand - RuntimeState.LockedSand);
-        int predictedUpper = Mathf.Clamp(RuntimeState.UpperSand - RuntimeState.PlayerSpend, 0, unlockedSand);
-        int predictedLower = Mathf.Clamp(RuntimeState.LowerSand + RuntimeState.PlayerSpend, 0, unlockedSand);
-        EventBus.Instance.Publish(new CombatCommandQueuedEvent(command, predictedUpper, predictedLower, CreateSnapshot()));
-        Debug.Log($"[Combat] CommandQueued | {command.DisplayName} c{command.Cost} -> U:{predictedUpper} L:{predictedLower}");
+        int cost = Mathf.Clamp(command.Cost, 0, RuntimeState.UpperSand);
+        RuntimeState.UpperSand = Mathf.Clamp(RuntimeState.UpperSand - cost, 0, unlockedSand);
+        RuntimeState.LowerSand = Mathf.Clamp(RuntimeState.LowerSand + cost, 0, unlockedSand);
+        RuntimeState.PlayerSpend = Mathf.Clamp(RuntimeState.PlayerSand - RuntimeState.UpperSand, 0, RuntimeState.PlayerSand);
+        EventBus.Instance.Publish(new CombatCommandQueuedEvent(command, RuntimeState.UpperSand, RuntimeState.LowerSand, CreateSnapshot()));
+
+        CombatActionResult result = ApplyCommand(command, source);
+        source.HasActedThisRound = true;
+
+        string message = result.Succeeded ? "Resolved" : (result.FailureReason ?? "Failed");
+        EventBus.Instance.Publish(new CombatAllyCommandResolvedEvent(command, result.Succeeded, message, CreateSnapshot()));
+        Debug.Log($"[Combat] AllyCommandResolved | {source.DisplayName} {command.ActionType} {message}");
+
+        EvaluateCombatEnd();
+        return result.Succeeded;
     }
 
     public void RequestGuard()
@@ -216,20 +253,22 @@ public class HourglassCombatManager : Singleton<HourglassCombatManager>
             return false;
         }
 
+        bool canUseBonus = RuntimeState.EnableKillBonus
+            && RuntimeState.KillBonusToken > 0
+            && !RuntimeState.KillBonusCommandConsumedThisRound;
+        if (source.HasActedThisRound && !canUseBonus)
+        {
+            reason = "AlreadyActed";
+            return false;
+        }
+
         if (actionData == null)
         {
             reason = "ActionNull";
             return false;
         }
 
-        int existingForActor = CountQueuedCommandsForActor(source.ActorId);
-        int simulatedSpend = RuntimeState.PlayerSpend;
-        if (existingForActor > 0)
-        {
-            simulatedSpend -= GetFirstQueuedCostForActor(source.ActorId);
-        }
-
-        int remainingUpper = Mathf.Max(0, RuntimeState.UpperSand - simulatedSpend);
+        int remainingUpper = Mathf.Max(0, RuntimeState.UpperSand);
         if (remainingUpper < Mathf.Max(0, actionData.baseCost))
         {
             reason = "NotEnoughUpperSand";
@@ -238,8 +277,8 @@ public class HourglassCombatManager : Singleton<HourglassCombatManager>
 
         if (RequiresEnemyTarget(actionData))
         {
-            CombatActorRuntime enemy = RuntimeState.GetSelectedEnemy();
-            if (enemy == null || enemy.IsDead)
+            CombatActorRuntime enemy = RuntimeState.GetFirstAliveEnemy();
+            if (enemy == null)
             {
                 reason = "TargetRequired";
                 return false;
@@ -465,6 +504,8 @@ public class HourglassCombatManager : Singleton<HourglassCombatManager>
         RuntimeState.EnemyIntents.Clear();
         RuntimeState.BeginRoundPlanning();
         EnsureSelectionsAreAlive();
+        RuntimeState.SelectedAllySlot = FindFirstAliveSlot(RuntimeState.Allies);
+        RuntimeState.SelectedEnemySlot = FindFirstAliveSlot(RuntimeState.Enemies);
 
         BuildEnemyIntentsForRound();
         RebuildEnemyOrder("RoundStart");
@@ -574,21 +615,10 @@ public class HourglassCombatManager : Singleton<HourglassCombatManager>
         }
 
         CombatActionDataSO actionData = source.ActionList[actionIndex];
-        if (!CanQueueActionForSelectedAlly(actionData, out string reason))
+        if (!TryExecuteActionForSelectedAlly(actionData, -1, out string reason))
         {
-            Debug.LogWarning($"[Combat] Queue blocked: {reason}");
-            return;
+            Debug.LogWarning($"[Combat] Action blocked: {reason}");
         }
-
-        CombatCommandRuntime command = CreateRuntimeCommand(source, actionData);
-        QueueOrReplaceCommand(command);
-        RecomputePlayerSpend();
-
-        int unlockedSand = Mathf.Max(1, RuntimeState.TotalSand - RuntimeState.LockedSand);
-        int predictedUpper = Mathf.Clamp(RuntimeState.UpperSand - RuntimeState.PlayerSpend, 0, unlockedSand);
-        int predictedLower = Mathf.Clamp(RuntimeState.LowerSand + RuntimeState.PlayerSpend, 0, unlockedSand);
-        EventBus.Instance.Publish(new CombatCommandQueuedEvent(command, predictedUpper, predictedLower, CreateSnapshot()));
-        Debug.Log($"[Combat] CommandQueued | {command.DisplayName} c{command.Cost} -> U:{predictedUpper} L:{predictedLower}");
     }
 
     private void QueueOrReplaceCommand(CombatCommandRuntime command)
@@ -681,7 +711,7 @@ public class HourglassCombatManager : Singleton<HourglassCombatManager>
     private IEnumerator ConfirmAndRunRoundRoutine()
     {
         RuntimeState.TurnState = CombatTurnState.PlayerResolving;
-        RecomputePlayerSpend();
+        RuntimeState.PlayerSpend = Mathf.Clamp(RuntimeState.PlayerSand - RuntimeState.UpperSand, 0, RuntimeState.PlayerSand);
         EventBus.Instance.Publish(new CombatCommandConfirmedEvent(RuntimeState.PlayerSpend, CreateSnapshot()));
         Debug.Log($"[Combat] CommandConfirmed | Spend:{RuntimeState.PlayerSpend}");
 
@@ -690,9 +720,6 @@ public class HourglassCombatManager : Singleton<HourglassCombatManager>
             RuntimeState.KillBonusToken = Mathf.Max(0, RuntimeState.KillBonusToken - 1);
         }
 
-        MovePlayerSpendFromUpperToLower();
-        yield return null;
-        ResolveAllyCommands();
         if (_phaseStepDelay > 0f) yield return new WaitForSeconds(_phaseStepDelay);
         EvaluateCombatEnd();
         if (RuntimeState.IsCombatEnded)
@@ -710,7 +737,7 @@ public class HourglassCombatManager : Singleton<HourglassCombatManager>
             yield break;
         }
 
-        ResolveEnemyTurn();
+        yield return StartCoroutine(ResolveEnemyTurnRoutine());
         if (_phaseStepDelay > 0f) yield return new WaitForSeconds(_phaseStepDelay);
         EvaluateCombatEnd();
         if (RuntimeState.IsCombatEnded)
@@ -876,7 +903,7 @@ public class HourglassCombatManager : Singleton<HourglassCombatManager>
         Debug.Log($"[Combat] HourglassFlipped | transferredToEnemy:{transferredToEnemy} EnemySand:{RuntimeState.EnemySand}");
     }
 
-    private void ResolveEnemyTurn()
+    private IEnumerator ResolveEnemyTurnRoutine()
     {
         RuntimeState.TurnState = CombatTurnState.EnemyResolving;
         RebuildEnemyOrder("EnemyTurnStarted");
@@ -889,7 +916,7 @@ public class HourglassCombatManager : Singleton<HourglassCombatManager>
         {
             if (RuntimeState.IsCombatEnded)
             {
-                return;
+                yield break;
             }
 
             CombatTimelineEntryRuntime orderEntry = RuntimeState.EnemyOrder[i];
@@ -899,6 +926,7 @@ public class HourglassCombatManager : Singleton<HourglassCombatManager>
             if (enemy == null || enemy.IsDead)
             {
                 PublishEnemyEntryResolved(orderEntry, false, "Dead");
+                if (_enemyActionStepDelay > 0f) yield return new WaitForSeconds(_enemyActionStepDelay);
                 continue;
             }
 
@@ -911,6 +939,7 @@ public class HourglassCombatManager : Singleton<HourglassCombatManager>
 
                 PublishEnemyEntryResolved(orderEntry, false, "EnemyActionSkippedByBreak");
                 Debug.Log($"[Combat] EnemyActionSkippedByBreak | {enemy.DisplayName}");
+                if (_enemyActionStepDelay > 0f) yield return new WaitForSeconds(_enemyActionStepDelay);
                 continue;
             }
 
@@ -919,14 +948,16 @@ public class HourglassCombatManager : Singleton<HourglassCombatManager>
             {
                 enemy.CurrentActionValue += enemy.BaseActionValue;
                 PublishEnemyEntryResolved(orderEntry, true, "NoAction");
+                if (_enemyActionStepDelay > 0f) yield return new WaitForSeconds(_enemyActionStepDelay);
                 continue;
             }
 
             ResolveEnemyIntentForEntry(enemy, intent.Value, orderEntry);
+            if (_enemyActionStepDelay > 0f) yield return new WaitForSeconds(_enemyActionStepDelay);
             EvaluateCombatEnd();
             if (RuntimeState.IsCombatEnded)
             {
-                return;
+                yield break;
             }
         }
     }

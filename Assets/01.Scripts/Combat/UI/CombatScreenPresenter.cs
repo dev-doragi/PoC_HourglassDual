@@ -27,6 +27,8 @@ public class CombatScreenPresenter : MonoBehaviour
     private CombatActionDataSO _basicAction;
     private CombatActionDataSO _guardAction;
     private CombatActionDataSO _specialAction;
+    private CombatActionDataSO _pendingEnemyTargetAction;
+    private int _pendingSourceActorId = -1;
 
     private void OnEnable()
     {
@@ -187,7 +189,7 @@ public class CombatScreenPresenter : MonoBehaviour
         ApplyActionSlot(0, "Q Basic", _basicAction, planning);
         ApplyActionSlot(1, "W Special", _specialAction, planning);
         ApplyActionSlot(2, "E Guard", _guardAction, planning);
-        int predictedEnemySand = Mathf.Max(state.MinimumFall, state.LowerSand + state.PlayerSpend);
+        int predictedEnemySand = Mathf.Max(state.MinimumFall, state.LowerSand);
         actionPanelView.SetEndTurnPreview(true, predictedEnemySand);
         actionPanelView.SetFlipInteractable(planning);
     }
@@ -203,7 +205,7 @@ public class CombatScreenPresenter : MonoBehaviour
         ApplyActionSlot(0, "Q Basic", _basicAction, planning);
         ApplyActionSlot(1, "W Special", _specialAction, planning);
         ApplyActionSlot(2, "E Guard", _guardAction, planning);
-        int predictedEnemySand = Mathf.Max(state.MinimumFall, state.LowerSand + state.PlayerSpend);
+        int predictedEnemySand = Mathf.Max(state.MinimumFall, state.LowerSand);
         actionPanelView.SetEndTurnPreview(true, predictedEnemySand);
         actionPanelView.SetFlipInteractable(planning);
     }
@@ -448,6 +450,7 @@ public class CombatScreenPresenter : MonoBehaviour
 
     private void OnCombatRoundStarted(CombatRoundStartedEvent evt)
     {
+        ClearPendingTargeting();
         combatLogView?.AddLog($"[R{evt.Snapshot.round_index}] Round Start");
         RefreshViews();
     }
@@ -582,10 +585,16 @@ public class CombatScreenPresenter : MonoBehaviour
         combatLogView?.AddLog($"[R{evt.Snapshot.round_index}] Selected {evt.TeamType} slot {evt.SlotIndex}");
         if (evt.TeamType == CombatActorType.Ally)
         {
+            ClearPendingTargeting();
             RefreshViews(true);
         }
         else
         {
+            if (TryResolvePendingEnemyTargetAction(evt.ActorId))
+            {
+                return;
+            }
+
             RefreshViews(false);
         }
     }
@@ -639,6 +648,7 @@ public class CombatScreenPresenter : MonoBehaviour
 
     private void OnCombatEnded(CombatEndedEvent evt)
     {
+        ClearPendingTargeting();
         combatLogView?.AddLog($"[R{evt.Snapshot.round_index}] {(evt.PlayerWon ? "Victory" : "Defeat")}");
         hourglassView?.SetResultText(evt.PlayerWon);
         SetAllButtonsInteractable(false);
@@ -667,40 +677,115 @@ public class CombatScreenPresenter : MonoBehaviour
 
     private void RequestBasicAction()
     {
-        if (hourglassView != null && hourglassView.IsTransitioning) return;
-        CacheCombatManager();
-        if (_basicAction != null)
-        {
-            _combatManager?.RequestActionForSelectedAlly(_basicAction);
-        }
+        RequestPlayerAction(_basicAction);
     }
 
     private void RequestSpecialAction()
     {
-        if (hourglassView != null && hourglassView.IsTransitioning) return;
-        CacheCombatManager();
-        if (_specialAction != null)
-        {
-            _combatManager?.RequestActionForSelectedAlly(_specialAction);
-        }
+        RequestPlayerAction(_specialAction);
     }
 
     private void RequestGuardAction()
     {
-        if (hourglassView != null && hourglassView.IsTransitioning) return;
-        CacheCombatManager();
-        if (_guardAction != null)
-        {
-            _combatManager?.RequestActionForSelectedAlly(_guardAction);
-        }
+        RequestPlayerAction(_guardAction);
     }
 
     private void RequestFlip()
     {
         if (hourglassView != null && hourglassView.IsTransitioning) return;
         CacheCombatManager();
+        ClearPendingTargeting();
         _combatManager?.RequestEndTurn();
     }
+
+    private void RequestPlayerAction(CombatActionDataSO action)
+    {
+        if (hourglassView != null && hourglassView.IsTransitioning)
+        {
+            return;
+        }
+
+        CacheCombatManager();
+        if (_combatManager == null || action == null || _combatManager.RuntimeState == null)
+        {
+            return;
+        }
+
+        CombatRuntimeState state = _combatManager.RuntimeState;
+        if (state.TurnState != CombatTurnState.PlayerCommand || state.IsCombatEnded)
+        {
+            return;
+        }
+
+        CombatActorRuntime source = state.GetSelectedAlly();
+        if (source == null || source.IsDead)
+        {
+            return;
+        }
+
+        if (RequiresExplicitEnemyTarget(action))
+        {
+            _pendingEnemyTargetAction = action;
+            _pendingSourceActorId = source.ActorId;
+            combatLogView?.AddLog($"[R{state.TurnIndex}] Targeting {action.displayName}");
+            RefreshViews(false);
+            return;
+        }
+
+        ExecuteImmediatePlayerAction(action, -1);
+    }
+
+    private bool TryResolvePendingEnemyTargetAction(int enemyActorId)
+    {
+        if (_pendingEnemyTargetAction == null || _combatManager == null || _combatManager.RuntimeState == null)
+        {
+            return false;
+        }
+
+        CombatRuntimeState state = _combatManager.RuntimeState;
+        if (state.TurnState != CombatTurnState.PlayerCommand || state.IsCombatEnded)
+        {
+            ClearPendingTargeting();
+            return false;
+        }
+
+        CombatActorRuntime source = state.GetSelectedAlly();
+        if (source == null || source.IsDead || source.ActorId != _pendingSourceActorId)
+        {
+            ClearPendingTargeting();
+            RefreshViews(true);
+            return true;
+        }
+
+        ExecuteImmediatePlayerAction(_pendingEnemyTargetAction, enemyActorId);
+        return true;
+    }
+
+    private void ExecuteImmediatePlayerAction(CombatActionDataSO action, int targetActorId)
+    {
+        if (_combatManager == null || action == null)
+        {
+            return;
+        }
+
+        bool ok = _combatManager.TryExecuteActionForSelectedAlly(action, targetActorId, out string reason);
+        if (!ok && !string.IsNullOrWhiteSpace(reason))
+        {
+            combatLogView?.AddLog($"ActionBlocked: {reason}");
+        }
+
+        ClearPendingTargeting();
+        RefreshViews(true);
+    }
+
+    private static bool RequiresExplicitEnemyTarget(CombatActionDataSO action)
+    {
+        return action != null && action.targetType == CombatTargetType.SingleEnemy;
+    }
+
+    private void ClearPendingTargeting()
+    {
+        _pendingEnemyTargetAction = null;
+        _pendingSourceActorId = -1;
+    }
 }
-
-

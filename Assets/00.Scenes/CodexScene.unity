@@ -8281,6 +8281,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::HourglassSandView
   _rotatingVisualRoot: {fileID: 1405281838}
+  _hourglassTextCanvasGroup: {fileID: 1294112082}
   _upperSlider: {fileID: 371401042}
   _downerSlider: {fileID: 1012336504}
   _upperText: {fileID: 136274776}
@@ -8289,6 +8290,9 @@ MonoBehaviour:
   _nextSandText: {fileID: 1824925955}
   _flipDuration: 0.34
   _flipAnglePerTurn: -180
+  _textFadeDuration: 0.08
+  _sandTweenDuration: 0.16
+  _sandTweenEase: 1
 --- !u!1 &1547812960
 GameObject:
   m_ObjectHideFlags: 0
@@ -12512,8 +12516,16 @@ PrefabInstance:
     m_TransformParent: {fileID: 0}
     m_Modifications:
     - target: {fileID: 2883842197826532120, guid: f884b86f794e22a42b00396c08d6210b, type: 3}
+      propertyPath: _phaseStepDelay
+      value: 0.5
+      objectReference: {fileID: 0}
+    - target: {fileID: 2883842197826532120, guid: f884b86f794e22a42b00396c08d6210b, type: 3}
       propertyPath: _isDontDestroyOnLoad
       value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 2883842197826532120, guid: f884b86f794e22a42b00396c08d6210b, type: 3}
+      propertyPath: _enemyActionStepDelay
+      value: 0.5
       objectReference: {fileID: 0}
     - target: {fileID: 5231236225038979633, guid: f884b86f794e22a42b00396c08d6210b, type: 3}
       propertyPath: m_Name

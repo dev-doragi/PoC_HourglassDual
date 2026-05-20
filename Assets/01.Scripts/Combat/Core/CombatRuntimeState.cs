@@ -146,8 +146,12 @@ public class CombatRuntimeState
             return null;
         }
 
-        int safeSlot = Mathf.Clamp(SelectedAllySlot, 0, Allies.Count - 1);
-        return Allies[safeSlot];
+        if (SelectedAllySlot < 0 || SelectedAllySlot >= Allies.Count)
+        {
+            return null;
+        }
+
+        return Allies[SelectedAllySlot];
     }
 
     public CombatActorRuntime GetSelectedEnemy()
@@ -157,8 +161,12 @@ public class CombatRuntimeState
             return null;
         }
 
-        int safeSlot = Mathf.Clamp(SelectedEnemySlot, 0, Enemies.Count - 1);
-        return Enemies[safeSlot];
+        if (SelectedEnemySlot < 0 || SelectedEnemySlot >= Enemies.Count)
+        {
+            return null;
+        }
+
+        return Enemies[SelectedEnemySlot];
     }
 
     public CombatActorRuntime GetFirstAliveEnemy()

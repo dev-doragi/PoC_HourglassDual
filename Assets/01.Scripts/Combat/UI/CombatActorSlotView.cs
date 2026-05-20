@@ -102,7 +102,7 @@ public class CombatActorSlotView : MonoBehaviour
 
     private void OnPrimaryActionInput(PrimaryActionInputEvent evt)
     {
-        if (!evt.IsPressed || !_clickable || _clickCollider == null || !evt.HasScreenPosition)
+        if (!evt.IsPressed || !_clickable || !evt.HasScreenPosition)
         {
             return;
         }
@@ -112,18 +112,36 @@ public class CombatActorSlotView : MonoBehaviour
             return;
         }
 
-        Camera cam = Camera.main;
-        if (cam == null)
-        {
-            return;
-        }
-
-        Vector3 world = cam.ScreenToWorldPoint(evt.ScreenPosition);
-        Vector2 point = new Vector2(world.x, world.y);
-        if (_clickCollider.OverlapPoint(point))
+        if (IsPointerOnSlot(evt.ScreenPosition))
         {
             OnClickSelect();
         }
+    }
+
+    private bool IsPointerOnSlot(Vector2 screenPosition)
+    {
+        Camera cam = Camera.main;
+        if (cam == null)
+        {
+            return false;
+        }
+
+        Vector3 world = cam.ScreenToWorldPoint(screenPosition);
+        Vector2 point = new Vector2(world.x, world.y);
+
+        if (_clickCollider != null && _clickCollider.enabled && _clickCollider.OverlapPoint(point))
+        {
+            return true;
+        }
+
+        if (_spriteRenderer == null)
+        {
+            return false;
+        }
+
+        Bounds bounds = _spriteRenderer.bounds;
+        Vector3 worldPoint = new Vector3(point.x, point.y, bounds.center.z);
+        return bounds.Contains(worldPoint);
     }
 
     private void SetBars(int hp, int hpMax, int guard, int guardMax)
