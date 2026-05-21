@@ -135,7 +135,7 @@ public class CombatView : MonoBehaviour
             return;
         }
 
-        if (actor == null)
+        if (actor == null || actor.IsDead)
         {
             renderer.gameObject.SetActive(false);
             return;
@@ -153,6 +153,11 @@ public class CombatView : MonoBehaviour
     private void PlayAttackSequence(int actorId)
     {
         if (!TryResolveActorRef(actorId, out CombatActorRuntime actor, out Transform pivot, out SpriteRenderer renderer))
+        {
+            return;
+        }
+
+        if (actor.IsDead)
         {
             return;
         }
@@ -198,6 +203,11 @@ public class CombatView : MonoBehaviour
     private void PlayHitSequence(int actorId)
     {
         if (!TryResolveActorRef(actorId, out CombatActorRuntime actor, out Transform pivot, out SpriteRenderer renderer))
+        {
+            return;
+        }
+
+        if (actor.IsDead)
         {
             return;
         }

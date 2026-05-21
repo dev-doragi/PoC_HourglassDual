@@ -21,6 +21,8 @@ public class HourglassCombatConfigSO : ScriptableObject
     [Header("Round Bonus")]
     public bool enableKillBonus = true;
     [Range(0, 3)] public int maxKillBonusPerRound = 1;
+    [Tooltip("When enabled, dead allies also consume fixed bonus sand each player turn (same rule as dead enemies).")]
+    public bool applyDeadAllyBonusSandSpend = false;
 
     [Header("Legacy (unused in v1.1)")]
     [FormerlySerializedAs("minimumTurnSand")] public int legacyMinimumFall = 3;

@@ -95,6 +95,7 @@ public class CombatRuntimeState
     public int LockedSand;
     public int MinimumFall;
     public int PlayerSand;
+    public int RoundStartUpperSand;
     public int PlayerSpend;
     public int EnemySand;
 

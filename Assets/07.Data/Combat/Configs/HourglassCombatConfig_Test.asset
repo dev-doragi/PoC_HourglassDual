@@ -13,7 +13,7 @@ MonoBehaviour:
   m_Name: HourglassCombatConfig_Test
   m_EditorClassIdentifier: Assembly-CSharp::HourglassCombatConfigSO
   totalSand: 10
-  lockedSand: 2
+  lockedSand: 0
   selectedDifficulty: {fileID: 11400000, guid: fcfa4f84df1940da94aff7671fc06f37, type: 2}
   allyPartyActors:
   - {fileID: 11400000, guid: 7f87367a8075488e9bb6109cac8b4beb, type: 2}
@@ -27,6 +27,7 @@ MonoBehaviour:
   defaultSelectedEnemyIndex: 0
   enableKillBonus: 1
   maxKillBonusPerRound: 1
+  applyDeadAllyBonusSandSpend: 1
   legacyMinimumFall: 3
   legacyDefaultPlayerSand: 5
   legacyDefaultEnemySand: 5

@@ -18,8 +18,8 @@ MonoBehaviour:
   roleType: 5
   slotIndex: 1
   maxHP: 9
-  maxGuard: 3
-  initialGuard: 3
+  maxGuard: 5
+  initialGuard: 5
   speedBase: 5
   actionList:
   - {fileID: 11400000, guid: 60eb22ca173f4190a84a629c5df132c2, type: 2}

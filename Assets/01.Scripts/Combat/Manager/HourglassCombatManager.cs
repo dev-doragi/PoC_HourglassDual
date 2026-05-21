@@ -6,17 +6,21 @@ using UnityEngine;
 [DefaultExecutionOrder(-70)]
 public class HourglassCombatManager : Singleton<HourglassCombatManager>
 {
+    private const int DeadActorBonusSandCost = 2;
+
     [SerializeField] private HourglassCombatConfigSO _config;
     [SerializeField] private CombatActionDataSO[] _globalActionCatalog;
     [SerializeField] private float _flipDuration = 0.45f;
     [SerializeField] private float _postFlipEnemyStartDelay = 0.12f;
     [SerializeField] private float _phaseStepDelay = 0.12f;
     [SerializeField] private float _enemyActionStepDelay = 0.2f;
+    [SerializeField] private float _minimumFallPreviewDelay = 0.18f;
 
     private readonly CombatActionResolver _actionResolver = new CombatActionResolver();
     private readonly CombatTurnProcessor _turnProcessor = new CombatTurnProcessor();
     private readonly Dictionary<CombatActionType, CombatActionDataSO> _actionByType = new Dictionary<CombatActionType, CombatActionDataSO>();
     private int? _nextCombatPlayerStartHpOverride;
+    private int _enemyTurnStartSand;
     private Coroutine _roundResolveRoutine;
 
     public CombatRuntimeState RuntimeState { get; private set; }
@@ -161,7 +165,7 @@ public class HourglassCombatManager : Singleton<HourglassCombatManager>
         int cost = Mathf.Clamp(command.Cost, 0, RuntimeState.UpperSand);
         RuntimeState.UpperSand = Mathf.Clamp(RuntimeState.UpperSand - cost, 0, unlockedSand);
         RuntimeState.LowerSand = Mathf.Clamp(RuntimeState.LowerSand + cost, 0, unlockedSand);
-        RuntimeState.PlayerSpend = Mathf.Clamp(RuntimeState.PlayerSand - RuntimeState.UpperSand, 0, RuntimeState.PlayerSand);
+        RuntimeState.PlayerSpend = Mathf.Max(0, RuntimeState.RoundStartUpperSand - RuntimeState.UpperSand);
         EventBus.Instance.Publish(new CombatCommandQueuedEvent(command, RuntimeState.UpperSand, RuntimeState.LowerSand, CreateSnapshot()));
 
         CombatActionResult result = ApplyCommand(command, source);
@@ -335,6 +339,7 @@ public class HourglassCombatManager : Singleton<HourglassCombatManager>
             PlayerSand = startSand,
             UpperSand = startSand,
             LowerSand = unlockedSand - startSand,
+            RoundStartUpperSand = startSand,
             PlayerSpend = 0,
             EnemySand = 0,
             Pressure = 0,
@@ -500,7 +505,7 @@ public class HourglassCombatManager : Singleton<HourglassCombatManager>
         _nextCombatPlayerStartHpOverride = null;
     }
 
-    private void BeginRound(int round)
+    private void BeginRound(int round, bool preserveCurrentSand = false)
     {
         if (RuntimeState == null || RuntimeState.IsCombatEnded)
         {
@@ -518,8 +523,23 @@ public class HourglassCombatManager : Singleton<HourglassCombatManager>
         }
 
         int unlockedSand = Mathf.Max(1, RuntimeState.TotalSand - RuntimeState.LockedSand);
-        RuntimeState.UpperSand = Mathf.Clamp(RuntimeState.PlayerSand, 0, unlockedSand);
-        RuntimeState.LowerSand = Mathf.Clamp(unlockedSand - RuntimeState.UpperSand, 0, unlockedSand);
+        if (preserveCurrentSand)
+        {
+            RuntimeState.UpperSand = Mathf.Clamp(RuntimeState.UpperSand, 0, unlockedSand);
+            RuntimeState.LowerSand = Mathf.Clamp(unlockedSand - RuntimeState.UpperSand, 0, unlockedSand);
+        }
+        else
+        {
+            RuntimeState.UpperSand = Mathf.Clamp(RuntimeState.PlayerSand, 0, unlockedSand);
+            RuntimeState.LowerSand = Mathf.Clamp(unlockedSand - RuntimeState.UpperSand, 0, unlockedSand);
+        }
+
+        if (_config != null && _config.applyDeadAllyBonusSandSpend)
+        {
+            ApplyDeadAllyBonusSandSpendAtRoundStart(unlockedSand);
+        }
+
+        RuntimeState.RoundStartUpperSand = RuntimeState.UpperSand;
 
         RuntimeState.EnemyIntents.Clear();
         RuntimeState.BeginRoundPlanning();
@@ -731,7 +751,7 @@ public class HourglassCombatManager : Singleton<HourglassCombatManager>
     private IEnumerator ConfirmAndRunRoundRoutine()
     {
         RuntimeState.TurnState = CombatTurnState.PlayerResolving;
-        RuntimeState.PlayerSpend = Mathf.Clamp(RuntimeState.PlayerSand - RuntimeState.UpperSand, 0, RuntimeState.PlayerSand);
+        RuntimeState.PlayerSpend = Mathf.Max(0, RuntimeState.RoundStartUpperSand - RuntimeState.UpperSand);
         EventBus.Instance.Publish(new CombatCommandConfirmedEvent(RuntimeState.PlayerSpend, CreateSnapshot()));
         Debug.Log($"[Combat] CommandConfirmed | Spend:{RuntimeState.PlayerSpend}");
 
@@ -748,7 +768,14 @@ public class HourglassCombatManager : Singleton<HourglassCombatManager>
             yield break;
         }
 
-        ApplyMinimumFallAndFlip();
+        bool minimumFallApplied = ApplyMinimumFallPreview();
+        if (minimumFallApplied)
+        {
+            Debug.Log($"[Combat] MinimumFallPreview | min:{RuntimeState.MinimumFall}");
+            yield return new WaitForSeconds(Mathf.Max(_phaseStepDelay, _minimumFallPreviewDelay));
+        }
+
+        FlipToEnemyTurn();
         float firstFlipDelay = Mathf.Max(_phaseStepDelay, _flipDuration) + Mathf.Max(0f, _postFlipEnemyStartDelay);
         yield return new WaitForSeconds(firstFlipDelay);
         EvaluateCombatEnd();
@@ -770,7 +797,9 @@ public class HourglassCombatManager : Singleton<HourglassCombatManager>
         PublishTurnSwapFlipOnly();
         yield return new WaitForSeconds(Mathf.Max(_phaseStepDelay, _flipDuration));
 
-        BeginRound(RuntimeState.TurnIndex + 1);
+        ApplyEnemySpentTransferToPlayerTurn();
+
+        BeginRound(RuntimeState.TurnIndex + 1, true);
         _roundResolveRoutine = null;
     }
 
@@ -912,7 +941,7 @@ public class HourglassCombatManager : Singleton<HourglassCombatManager>
         return result;
     }
 
-    private void ApplyMinimumFallAndFlip()
+    private bool ApplyMinimumFallPreview()
     {
         CombatTurnProcessor.MinimumFallResult minimumFallResult = _turnProcessor.ApplyMinimumFall(RuntimeState);
         EventBus.Instance.Publish(new CombatMinimumFallAppliedEvent(
@@ -921,7 +950,11 @@ public class HourglassCombatManager : Singleton<HourglassCombatManager>
             minimumFallResult.UpperAfter,
             minimumFallResult.LowerAfter,
             CreateSnapshot()));
+        return minimumFallResult.ForcedFallAmount > 0;
+    }
 
+    private void FlipToEnemyTurn()
+    {
         int previousEnemySand = Mathf.Max(0, RuntimeState.EnemySand);
         int transferredToEnemy = Mathf.Max(0, RuntimeState.LowerSand);
         RuntimeState.TurnState = CombatTurnState.Flipping;
@@ -936,8 +969,28 @@ public class HourglassCombatManager : Singleton<HourglassCombatManager>
             0,
             false,
             "TurnStart");
+        _enemyTurnStartSand = Mathf.Max(0, RuntimeState.EnemySand);
         EventBus.Instance.Publish(new CombatHourglassFlippedEvent(RuntimeState.EnemySand, CreateSnapshot()));
         Debug.Log($"[Combat] HourglassFlipped | transferredToEnemy:{transferredToEnemy} EnemySand:{RuntimeState.EnemySand}");
+    }
+
+    private void ApplyEnemySpentTransferToPlayerTurn()
+    {
+        if (RuntimeState == null)
+        {
+            return;
+        }
+
+        int unlockedSand = Mathf.Max(1, RuntimeState.TotalSand - RuntimeState.LockedSand);
+        int beforeUpper = Mathf.Clamp(RuntimeState.UpperSand, 0, unlockedSand);
+        int beforeLower = Mathf.Clamp(RuntimeState.LowerSand, 0, unlockedSand);
+        int carryToPlayer = Mathf.Clamp(Mathf.Max(0, _enemyTurnStartSand - RuntimeState.EnemySand), 0, unlockedSand);
+
+        RuntimeState.UpperSand = carryToPlayer;
+        RuntimeState.LowerSand = Mathf.Clamp(unlockedSand - RuntimeState.UpperSand, 0, unlockedSand);
+        RuntimeState.RoundStartUpperSand = RuntimeState.UpperSand;
+
+        Debug.Log($"[Combat] EnemySpentTransferred | spent:{carryToPlayer} Upper:{beforeUpper}->{RuntimeState.UpperSand} Lower:{beforeLower}->{RuntimeState.LowerSand}");
     }
 
     private void PublishTurnSwapFlipOnly()
@@ -965,6 +1018,7 @@ public class HourglassCombatManager : Singleton<HourglassCombatManager>
 
             CombatTimelineEntryRuntime orderEntry = RuntimeState.EnemyOrder[i];
             CombatActorRuntime enemy = RuntimeState.GetActorById(orderEntry.SourceActorId);
+            CombatIntentRuntime? intent = FindIntentForEnemy(enemy != null ? enemy.ActorId : -1);
             PublishEnemyEntryEvent(orderEntry, "EnemyOrderEntryStarted");
 
             if (enemy == null || enemy.IsDead)
@@ -980,6 +1034,7 @@ public class HourglassCombatManager : Singleton<HourglassCombatManager>
                 enemy.SkipCurrentAction = enemy.BreakSkipCount > 0;
                 enemy.GuardValue = enemy.MaxGuard;
                 enemy.CurrentActionValue += enemy.BaseActionValue;
+                ConsumeEnemySandForBreakSkip(enemy, intent);
 
                 PublishEnemyEntryResolved(orderEntry, false, "EnemyActionSkippedByBreak");
                 Debug.Log($"[Combat] EnemyActionSkippedByBreak | {enemy.DisplayName}");
@@ -987,7 +1042,6 @@ public class HourglassCombatManager : Singleton<HourglassCombatManager>
                 continue;
             }
 
-            CombatIntentRuntime? intent = FindIntentForEnemy(enemy.ActorId);
             if (!intent.HasValue)
             {
                 enemy.CurrentActionValue += enemy.BaseActionValue;
@@ -997,6 +1051,24 @@ public class HourglassCombatManager : Singleton<HourglassCombatManager>
             }
 
             ResolveEnemyIntentForEntry(enemy, intent.Value, orderEntry);
+            if (_enemyActionStepDelay > 0f) yield return new WaitForSeconds(_enemyActionStepDelay);
+            EvaluateCombatEnd();
+            if (RuntimeState.IsCombatEnded)
+            {
+                yield break;
+            }
+        }
+
+        int deadEnemyCount = CountDeadActors(RuntimeState.Enemies);
+        for (int i = 0; i < deadEnemyCount; i++)
+        {
+            SpendEnemySandAndPublish(
+                -1,
+                CombatActionType.None,
+                "Dead Enemy Bonus",
+                DeadActorBonusSandCost,
+                false,
+                "DeadEnemyBonusSpent");
             if (_enemyActionStepDelay > 0f) yield return new WaitForSeconds(_enemyActionStepDelay);
             EvaluateCombatEnd();
             if (RuntimeState.IsCombatEnded)
@@ -1041,23 +1113,10 @@ public class HourglassCombatManager : Singleton<HourglassCombatManager>
             usedFallback = true;
         }
 
-        int spentEnemySand = Mathf.Max(0, resolvedIntent.EffectiveCost);
-        RuntimeState.EnemySand = Mathf.Max(0, RuntimeState.EnemySand - spentEnemySand);
-
-        // Shared hourglass resource: enemy spend also moves sand from upper to lower.
-        int unlockedSand = Mathf.Max(1, RuntimeState.TotalSand - RuntimeState.LockedSand);
-        int transferable = Mathf.Clamp(spentEnemySand, 0, RuntimeState.UpperSand);
-        RuntimeState.UpperSand = Mathf.Clamp(RuntimeState.UpperSand - transferable, 0, unlockedSand);
-        RuntimeState.LowerSand = Mathf.Clamp(RuntimeState.LowerSand + transferable, 0, unlockedSand);
-
-        int appliedEnemySpend = Mathf.Max(0, enemySandBefore - RuntimeState.EnemySand);
-        PublishEnemySandChanged(
+        int appliedEnemySpend = SpendEnemySandAndPublish(
             enemy.ActorId,
             resolvedIntent.ActionType,
             string.IsNullOrWhiteSpace(resolvedIntent.DisplayName) ? resolvedIntent.ActionType.ToString() : resolvedIntent.DisplayName,
-            enemySandBefore,
-            RuntimeState.EnemySand,
-            appliedEnemySpend,
             Mathf.Max(0, resolvedIntent.EffectiveCost),
             usedFallback,
             usedFallback ? "FallbackSpent" : "Spent");
@@ -1071,9 +1130,88 @@ public class HourglassCombatManager : Singleton<HourglassCombatManager>
             return;
         }
 
-        EventBus.Instance.Publish(new CombatIntentResolvedEvent(ToIntentSnapshot(resolvedIntent), resolvedIntent.EffectiveCost, CreateSnapshot()));
+        EventBus.Instance.Publish(new CombatIntentResolvedEvent(ToIntentSnapshot(resolvedIntent), appliedEnemySpend, CreateSnapshot()));
         PublishEnemyEntryResolved(orderEntry, true, usedFallback ? "EnemyFallbackResolved" : "EnemyIntentResolved");
         Debug.Log($"[Combat] {(usedFallback ? "EnemyFallbackResolved" : "EnemyIntentResolved")} | {enemy.DisplayName} {resolvedIntent.ActionType} spend:{resolvedIntent.EffectiveCost}");
+    }
+
+    private void ApplyDeadAllyBonusSandSpendAtRoundStart(int unlockedSand)
+    {
+        int deadAllies = CountDeadActors(RuntimeState.Allies);
+        if (deadAllies <= 0)
+        {
+            return;
+        }
+
+        int totalSpent = 0;
+        for (int i = 0; i < deadAllies; i++)
+        {
+            int spent = Mathf.Clamp(DeadActorBonusSandCost, 0, RuntimeState.UpperSand);
+            if (spent <= 0)
+            {
+                break;
+            }
+
+            RuntimeState.UpperSand = Mathf.Clamp(RuntimeState.UpperSand - spent, 0, unlockedSand);
+            RuntimeState.LowerSand = Mathf.Clamp(RuntimeState.LowerSand + spent, 0, unlockedSand);
+            totalSpent += spent;
+        }
+
+        if (totalSpent > 0)
+        {
+            Debug.Log($"[Combat] DeadAllyBonusSpent | dead:{deadAllies} spent:{totalSpent} Upper:{RuntimeState.UpperSand} Lower:{RuntimeState.LowerSand}");
+        }
+    }
+
+    private void ConsumeEnemySandForBreakSkip(CombatActorRuntime enemy, CombatIntentRuntime? intent)
+    {
+        int spendCost = intent.HasValue
+            ? Mathf.Max(0, intent.Value.EffectiveCost)
+            : Mathf.Max(1, RuntimeState.EnemyCostMin);
+        CombatActionType actionType = intent.HasValue ? intent.Value.ActionType : CombatActionType.None;
+        string actionLabel = intent.HasValue
+            ? (string.IsNullOrWhiteSpace(intent.Value.DisplayName) ? intent.Value.ActionType.ToString() : intent.Value.DisplayName)
+            : "Groggy Skip";
+
+        SpendEnemySandAndPublish(
+            enemy != null ? enemy.ActorId : -1,
+            actionType,
+            actionLabel,
+            spendCost,
+            false,
+            "EnemyActionSkippedByBreakSpent");
+    }
+
+    private int SpendEnemySandAndPublish(
+        int actorId,
+        CombatActionType actionType,
+        string intentName,
+        int requiredEnemySand,
+        bool usedFallback,
+        string reason)
+    {
+        int beforeEnemySand = Mathf.Max(0, RuntimeState.EnemySand);
+        int requested = Mathf.Max(0, requiredEnemySand);
+        int spentEnemySand = Mathf.Clamp(requested, 0, beforeEnemySand);
+        RuntimeState.EnemySand = Mathf.Max(0, beforeEnemySand - spentEnemySand);
+
+        // Shared hourglass resource: enemy spend also moves sand from upper to lower.
+        int unlockedSand = Mathf.Max(1, RuntimeState.TotalSand - RuntimeState.LockedSand);
+        int transferable = Mathf.Clamp(spentEnemySand, 0, RuntimeState.UpperSand);
+        RuntimeState.UpperSand = Mathf.Clamp(RuntimeState.UpperSand - transferable, 0, unlockedSand);
+        RuntimeState.LowerSand = Mathf.Clamp(RuntimeState.LowerSand + transferable, 0, unlockedSand);
+
+        PublishEnemySandChanged(
+            actorId,
+            actionType,
+            intentName,
+            beforeEnemySand,
+            RuntimeState.EnemySand,
+            spentEnemySand,
+            requested,
+            usedFallback,
+            reason);
+        return spentEnemySand;
     }
 
     private CombatIntentRuntime? FindIntentForEnemy(int enemyActorId)
@@ -1657,6 +1795,20 @@ public class HourglassCombatManager : Singleton<HourglassCombatManager>
         return value;
     }
 
+    private static int CountDeadActors(List<CombatActorRuntime> team)
+    {
+        int dead = 0;
+        for (int i = 0; i < team.Count; i++)
+        {
+            if (team[i] != null && team[i].IsDead)
+            {
+                dead += 1;
+            }
+        }
+
+        return dead;
+    }
+
     private CombatActorDataSO ToActorData(int actorId, CombatActorType teamType)
     {
         CombatActorDataSO[] pool = teamType == CombatActorType.Ally ? _config.allyPartyActors : _config.enemyPartyActors;
@@ -1676,3 +1828,7 @@ public class HourglassCombatManager : Singleton<HourglassCombatManager>
         return null;
     }
 }
+
+
+
+

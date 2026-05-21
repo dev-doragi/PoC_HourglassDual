@@ -13,8 +13,8 @@ MonoBehaviour:
   m_Name: Difficulty_Standard
   m_EditorClassIdentifier: Assembly-CSharp::CombatDifficultyDataSO
   difficultyName: Standard
-  playerStartSand: 6
-  minimumFall: 2
+  playerStartSand: 7
+  minimumFall: 3
   pressureRound1: 0
   pressureRound3: 1
   pressureRound5: 2

@@ -18,8 +18,8 @@ MonoBehaviour:
   targetType: 3
   baseCost: 2
   speed: 4
-  hpDamage: 3
-  guardDamage: 1
+  hpDamage: 2
+  guardDamage: 0
   guardGain: 0
   healAmount: 0
   fallbackActionType: 0
